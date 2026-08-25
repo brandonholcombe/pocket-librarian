@@ -182,6 +182,23 @@ async function updatePinnedMessage(client) {
   }
 }
 
+// Shared by the /request slash command and the website's request button.
+function addRequest(title, platform, requestedBy) {
+  const id = entryId(title, platform);
+  const existing = state.entries.find(e => e.id === id);
+  if (existing) {
+    return { status: existing.status === 'owned' ? 'owned' : 'requested', entry: existing };
+  }
+  const entry = {
+    id, title, platform,
+    status: 'requested', requestedBy,
+    requestedAt: new Date().toISOString(),
+  };
+  state.entries.push(entry);
+  saveState();
+  return { status: 'added', entry };
+}
+
 // ---------- command handling ----------
 async function handleCommand(interaction) {
   const name = interaction.commandName;
@@ -218,25 +235,18 @@ async function handleCommand(interaction) {
 
   if (name === 'request') {
     const { title, platform } = resolveRequested(value);
-    const id = entryId(title, platform);
-    const existing = state.entries.find(e => e.id === id);
-    if (existing) {
+    const r = addRequest(title, platform, interaction.user.displayName ?? interaction.user.username);
+    if (r.status === 'added') {
+      await interaction.reply(`🎯 Requested: **${title}** (${platform})`);
+    } else {
       await interaction.reply({
-        content: existing.status === 'owned'
+        content: r.status === 'owned'
           ? `**${title}** is already in the library ☑`
-          : `**${title}** is already requested (by ${existing.requestedBy})`,
+          : `**${title}** is already requested (by ${r.entry.requestedBy})`,
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
-    state.entries.push({
-      id, title, platform,
-      status: 'requested',
-      requestedBy: interaction.user.displayName ?? interaction.user.username,
-      requestedAt: new Date().toISOString(),
-    });
-    saveState();
-    await interaction.reply(`🎯 Requested: **${title}** (${platform})`);
   } else if (name === 'got' || name === 'remove') {
     const entry = state.entries.find(e => e.id === value)
       ?? state.entries.find(e => e.title.toLowerCase() === value.toLowerCase().trim());
@@ -281,6 +291,11 @@ client.once('clientReady', async () => {
 startWeb({
   state,
   GAMES,
+  onRequest(title, platform, byName) {
+    const r = addRequest(title, platform, byName);
+    if (r.status === 'added') updatePinnedMessage(client).catch(() => {});
+    return r;
+  },
   // A freshly uploaded ROM that matches a requested title flips it to owned.
   onLibraryChange(rom) {
     const entry = state.entries.find(e => e.status === 'requested' && normTitle(e.title) === normTitle(rom.title));

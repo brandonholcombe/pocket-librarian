@@ -103,6 +103,12 @@
       <option value="in">In my sync set</option>
       <option value="out">Not in my sync set</option>
     </select>
+    <select id="groupBy">
+      <option value="platform">Group: Platform</option>
+      <option value="series">Group: Series</option>
+      <option value="genre">Group: Genre</option>
+      <option value="">Group: None (A–Z)</option>
+    </select>
   </div>
   <div class="drop" id="drop">Drop ROM files or zips here (or click) — zips are extracted automatically;
     pick <b>Arcade</b> to keep a zip intact as an arcade romset
@@ -111,14 +117,18 @@
   </div>
   <div id="upStatus"></div>
   <div class="muted" id="libCount" style="margin:.4rem 0"></div>
-  <div class="grid" id="romGrid"></div>
+  <div id="romGrid"></div>
 </section>
 
 <section id="tab-wishlist" hidden>
+  <div class="toolbar">
+    <input type="search" id="reqQ" placeholder="Search the full catalog (16k titles) to request a game…">
+  </div>
+  <div id="reqResults"></div>
   <h2 style="font-size:1rem">🎯 Requested</h2>
-  <div class="grid small" id="wishGrid"></div>
+  <div id="wishGrid"></div>
   <h2 style="font-size:1rem;margin-top:1.4rem">☑ In library</h2>
-  <div class="grid small" id="ownedGrid"></div>
+  <div id="ownedGrid"></div>
 </section>
 
 <section id="tab-cores" hidden>
@@ -247,26 +257,77 @@ function coverHtml(platform, title, extra) {
     'onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'ph\',textContent:\'🕹️\'}))">' +
     '</div>';
 }
+// well-known franchises, for Group: Series
+const SERIES = [
+  ['Zelda', /zelda/], ['Pokémon', /pokemon/], ['Mario', /mario/],
+  ['Metroid', /metroid/], ['Final Fantasy', /final fantasy/],
+  ['Fire Emblem', /fire emblem/], ['Castlevania', /castlevania|akumajou/],
+  ['Mega Man', /mega ?man|rockman/], ['Sonic', /sonic/], ['Kirby', /kirby/],
+  ['Donkey Kong', /donkey kong/], ['Wario', /wario/],
+  ['Dragon Quest', /dragon quest|dragon warrior/], ['Golden Sun', /golden sun/],
+  ['Wars', /advance wars|famicom wars|game boy wars/], ['Street Fighter', /street fighter/],
+  ['Kingdom Hearts', /kingdom hearts/], ['Harvest Moon', /harvest moon|bokujou/],
+  ['Bomberman', /bomberman/], ['Contra', /contra|probotector/],
+  ['Ninja Gaiden', /ninja gaiden|ninja ryuuken/], ['Tetris', /tetris/],
+  ['Pac-Man', /pac-?man/], ['Double Dragon', /double dragon/],
+  ['TMNT', /teenage mutant|tmnt/], ['F-Zero', /f-zero/], ['Star Fox', /star ?fox/],
+  ['Metal Gear', /metal gear/], ['Gradius', /gradius|nemesis/], ['R-Type', /r-type/],
+  ['Phantasy Star', /phantasy star/], ['Ys', /^ys\b| ys /], ['Shining', /shining (force|in the)/],
+  ['Breath of Fire', /breath of fire/], ['Mortal Kombat', /mortal kombat/],
+  ['Shantae', /shantae/], ['Punch-Out', /punch-?out/], ['Kid Icarus', /kid icarus/],
+  ['Bonk', /bonk|pc genjin/], ['Adventure Island', /adventure island/],
+  ['Wonder Boy', /wonder boy/], ['Yu-Gi-Oh', /yu-gi-oh/],
+];
+const seriesOf = t => {
+  const l = t.toLowerCase();
+  return SERIES.find(([, re]) => re.test(l))?.[0];
+};
+
+function groupedGrid(items, keyFn, cardFn, small) {
+  const groups = new Map();
+  for (const it of items) {
+    const k = keyFn(it);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(it);
+  }
+  const names = [...groups.keys()].sort((a, b) =>
+    (a === 'Other' || a === 'Unknown') - (b === 'Other' || b === 'Unknown') || a.localeCompare(b));
+  return names.map(n =>
+    '<h2 style="font-size:.95rem;margin:1.1rem 0 .5rem;color:var(--accent2)">' + esc(n) +
+    ' <span class="meta">' + groups.get(n).length + '</span></h2>' +
+    '<div class="grid' + (small ? ' small' : '') + '">' + groups.get(n).map(cardFn).join('') + '</div>'
+  ).join('');
+}
+
 function renderRoms() {
   const q = $('q').value.toLowerCase();
   const pf = $('platFilter').value;
   const sf = $('setFilter').value;
+  const gb = $('groupBy').value;
   const hits = roms.filter(r =>
     (!q || r.title.toLowerCase().includes(q) || r.file.toLowerCase().includes(q)) &&
     (!pf || r.platform === pf) &&
     (!sf || (sf === 'in') === syncSet.has(r.id)));
   $('libCount').textContent = hits.length + ' of ' + roms.length +
     ' games · sync set: ' + syncSet.size;
-  $('romGrid').innerHTML = hits.map((r, i) => {
-    const idx = roms.indexOf(r);
-    return '<div class="card" data-i="' + idx + '">' +
-      coverHtml(r.platform, r.title, syncSet.has(r.id) ? '<span class="badge">✓ sync</span>' : '') +
-      '<div class="cinfo"><div class="t">' + esc(r.title) + '</div>' +
-      '<div class="m"><span class="chip">' + esc(r.platform) + '</span>' +
-      (r.year ? esc(r.year) : '') + '</div></div></div>';
-  }).join('') || '<div class="muted">nothing here yet — upload some ROMs above</div>';
+  const card = r =>
+    '<div class="card" data-i="' + roms.indexOf(r) + '">' +
+    coverHtml(r.platform, r.title, syncSet.has(r.id) ? '<span class="badge">✓ sync</span>' : '') +
+    '<div class="cinfo"><div class="t">' + esc(r.title) + '</div>' +
+    '<div class="m"><span class="chip">' + esc(r.platform) + '</span>' +
+    (r.year ? esc(r.year) : '') + '</div></div></div>';
+  const empty = '<div class="muted">nothing here yet — upload some ROMs above</div>';
+  if (!hits.length) { $('romGrid').innerHTML = empty; return; }
+  const keyFns = {
+    platform: r => r.platform,
+    series: r => seriesOf(r.title) ?? 'Other',
+    genre: r => r.genre ?? 'Unknown',
+  };
+  $('romGrid').innerHTML = gb
+    ? groupedGrid(hits, keyFns[gb], card)
+    : '<div class="grid">' + hits.map(card).join('') + '</div>';
 }
-for (const id of ['q', 'platFilter', 'setFilter'])
+for (const id of ['q', 'platFilter', 'setFilter', 'groupBy'])
   $(id).addEventListener('input', renderRoms);
 $('romGrid').addEventListener('click', e => {
   const card = e.target.closest('.card');
@@ -373,21 +434,62 @@ async function uploadFiles(files) {
 }
 
 // ---- wishlist ----
+let wishTitles = new Set();
 async function loadWishlist() {
   const s = await (await fetch('/api/state')).json();
+  wishTitles = new Set(s.entries.map(e => e.title.toLowerCase()));
   const render = (elId, status, badge) => {
     const items = s.entries.filter(e => e.status === status);
-    $(elId).innerHTML = items.map(e =>
+    const card = e =>
       '<div class="card" style="cursor:default">' +
       coverHtml(e.platform, e.title, badge) +
       '<div class="cinfo"><div class="t">' + esc(e.title) + '</div>' +
       '<div class="m"><span class="chip">' + esc(e.platform) + '</span>' +
-      esc(e.requestedBy || '') + '</div></div></div>'
-    ).join('') || '<div class="muted">none</div>';
+      esc(e.requestedBy || '') + '</div></div></div>';
+    $(elId).innerHTML = items.length
+      ? groupedGrid(items, e => e.platform, card, true)
+      : '<div class="muted">none</div>';
   };
   render('wishGrid', 'requested', '<span class="badge want">wanted</span>');
   render('ownedGrid', 'owned', '<span class="badge">☑</span>');
 }
+
+// ---- catalog search -> request ----
+let reqTimer, reqResults = [];
+$('reqQ')?.addEventListener('input', () => {
+  clearTimeout(reqTimer);
+  const q = $('reqQ').value.trim();
+  if (q.length < 2) { $('reqResults').innerHTML = ''; return; }
+  reqTimer = setTimeout(async () => {
+    const d = await (await fetch('/api/catalog?q=' + encodeURIComponent(q))).json();
+    reqResults = d.results;
+    $('reqResults').innerHTML = reqResults.length
+      ? '<div class="grid small" style="margin-bottom:1.2rem">' + reqResults.map((g, i) => {
+          const already = wishTitles.has(g.t.toLowerCase());
+          return '<div class="card" style="cursor:default">' +
+            coverHtml(g.p, g.t) +
+            '<div class="cinfo"><div class="t">' + esc(g.t) + '</div>' +
+            '<div class="m"><span class="chip">' + esc(g.p) + '</span>' + (g.y ? esc(g.y) : '') + '</div>' +
+            (already
+              ? '<div class="m ok" style="margin-top:.3rem">on the list ✓</div>'
+              : '<button class="primary" style="margin-top:.4rem;width:100%;font-size:.8rem" data-req="' + i + '">Request</button>') +
+            '</div></div>';
+        }).join('') + '</div>'
+      : '<div class="muted" style="margin-bottom:1rem">no catalog matches for “' + esc(q) + '”</div>';
+  }, 300);
+});
+$('reqResults')?.addEventListener('click', async e => {
+  const i = e.target.dataset.req;
+  if (i === undefined) return;
+  const g = reqResults[Number(i)];
+  e.target.disabled = true;
+  const r = await (await fetch('/api/request', {
+    method: 'POST', body: JSON.stringify({ title: g.t, platform: g.p }),
+  })).json();
+  e.target.outerHTML = '<div class="m ' + (r.status === 'owned' ? 'ok' : 'ok') + '" style="margin-top:.3rem">' +
+    (r.status === 'added' ? 'requested 🎯' : r.status === 'owned' ? 'already in library ☑' : 'already requested') + '</div>';
+  await loadWishlist();
+});
 
 // ---- sync to SD ----
 let cardHandle = null, missing = [];

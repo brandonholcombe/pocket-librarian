@@ -248,7 +248,7 @@ const safeName = s => {
 };
 
 // ---------- server ----------
-export function startWeb({ state, GAMES = [], onLibraryChange }) {
+export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
   // After reconciling files on disk, re-announce every stored ROM so wishlist
   // flips missed at upload time (bulk copies, matcher fixes) heal on boot.
   reconcile()
@@ -330,6 +330,32 @@ export function startWeb({ state, GAMES = [], onLibraryChange }) {
       if (p === '/api/state') { json(res, 200, { entries: state.entries }); return; }
       const artReq = p.match(/^\/api\/art\/([a-z]+)\/(.+)$/);
       if (artReq) { await serveArt(res, artReq[1], decodeURIComponent(artReq[2])); return; }
+
+      // ----- catalog search + web requests -----
+      if (p === '/api/catalog') {
+        if (!authed()) return;
+        const q = (url.searchParams.get('q') ?? '').toLowerCase().trim();
+        if (q.length < 2) { json(res, 200, { results: [] }); return; }
+        const starts = [], contains = [];
+        for (const g of GAMES) {
+          const t = g.t.toLowerCase();
+          if (t.startsWith(q)) starts.push(g);
+          else if (t.includes(q)) contains.push(g);
+          if (starts.length >= 50) break;
+        }
+        json(res, 200, { results: starts.concat(contains).slice(0, 50) });
+        return;
+      }
+      if (p === '/api/request' && req.method === 'POST') {
+        if (!authed()) return;
+        if (!onRequest) { json(res, 500, { error: 'requests unavailable' }); return; }
+        const body = JSON.parse(await readBody(req));
+        const title = String(body.title ?? '').trim().slice(0, 200);
+        const platform = FOLDERS[body.platform] !== undefined ? body.platform : 'Other';
+        if (!title) { json(res, 400, { error: 'title required' }); return; }
+        json(res, 200, onRequest(title, platform, user.name));
+        return;
+      }
 
       // ----- library -----
       if (p === '/api/roms' && req.method === 'GET') {
