@@ -9,7 +9,20 @@ import { fileURLToPath } from 'node:url';
 
 const CLIENT_ID = process.env.DISCORD_APP_ID;
 const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
+const BOT_TOKEN = process.env.DISCORD_TOKEN || '';
+const GUILD_ID = process.env.DISCORD_GUILD_ID || '';
 const ALLOWED = (process.env.ALLOWED_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+
+// A user may log in if they're on the explicit allowlist, or (default mode)
+// simply a member of the family Discord server, checked via the bot.
+async function isAllowed(userId) {
+  if (ALLOWED.includes(userId)) return true;
+  if (!GUILD_ID || !BOT_TOKEN) return false;
+  const r = await fetch(`https://discord.com/api/guilds/${GUILD_ID}/members/${userId}`, {
+    headers: { authorization: `Bot ${BOT_TOKEN}` },
+  });
+  return r.ok;
+}
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://pocket.kodloki.io';
 const ROMS_DIR = process.env.ROMS_DIR || './roms';
 const DATA_DIR = process.env.DATA_DIR || './data-state';
@@ -177,7 +190,7 @@ export function startWeb({ state, onLibraryChange }) {
         const me = await fetch('https://discord.com/api/users/@me', {
           headers: { authorization: `Bearer ${tr.access_token}` },
         }).then(r => r.json());
-        if (!ALLOWED.includes(me.id)) { res.writeHead(403); res.end('not on the allowlist'); return; }
+        if (!(await isAllowed(me.id))) { res.writeHead(403); res.end('not a member of the family server'); return; }
         const cookie = makeCookie({ id: me.id, name: me.global_name || me.username });
         res.writeHead(302, {
           'set-cookie': `session=${cookie}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${30 * 86400}`,

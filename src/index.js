@@ -55,6 +55,8 @@ const commands = [
       .setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName('list')
     .setDescription('Show the current library checklist'),
+  new SlashCommandBuilder().setName('help')
+    .setDescription('How the Pocket Librarian works'),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -147,12 +149,14 @@ function buildEmbed() {
   };
   return new EmbedBuilder()
     .setTitle('🎮 Pocket Library Checklist')
+    .setURL(PUBLIC_URL)
+    .setDescription(`**[Open the library site](${PUBLIC_URL})** — browse ROMs, upload, and sync to your SD card`)
     .setColor(0x8c52ff)
     .addFields(
       section('🎯 Requested', requested),
       section('☑ In library', owned),
     )
-    .setFooter({ text: `Full list: ${PUBLIC_URL}` })
+    .setFooter({ text: 'Type /help for commands' })
     .setTimestamp();
 }
 
@@ -184,6 +188,29 @@ async function handleCommand(interaction) {
 
   if (name === 'list') {
     await interaction.reply({ embeds: [buildEmbed()] });
+    return;
+  }
+
+  if (name === 'help') {
+    const help = new EmbedBuilder()
+      .setTitle('🎮 Pocket Librarian — how it works')
+      .setURL(PUBLIC_URL)
+      .setColor(0x8c52ff)
+      .setDescription(
+        'Family wishlist + ROM library for the Analogue Pocket.\n\n' +
+        '**Commands**\n' +
+        '• `/request <game>` — ask for a game; start typing and pick from autocomplete (~16k titles)\n' +
+        '• `/got <game>` — mark a requested game as purchased / in the library\n' +
+        '• `/remove <game>` — take a game off the list\n' +
+        '• `/list` — show the current checklist\n\n' +
+        '**The site**\n' +
+        `[${PUBLIC_URL.replace('https://', '')}](${PUBLIC_URL}) — log in with Discord (anyone in this server). ` +
+        'Browse and upload ROMs, tick the games you want, then use **Sync to SD** ' +
+        'to write missing games straight onto your SD card (Chrome/Edge on Mac or Windows).\n\n' +
+        'Uploading a ROM that matches a requested title checks it off automatically. ' +
+        'The pinned checklist message above always shows the current state.',
+      );
+    await interaction.reply({ embeds: [help], flags: MessageFlags.Ephemeral });
     return;
   }
 
