@@ -199,7 +199,7 @@ function showTab(name) {
 }
 
 // ---- cores ----
-let cores = [], coreSet = new Set();
+let cores = [], coreSet = new Set(), autoCores = new Set();
 async function loadCores() {
   $('coreList').innerHTML = '<div class="muted">loading core inventory…</div>';
   const d = await (await fetch('/api/cores')).json();
@@ -209,22 +209,28 @@ async function loadCores() {
     String(a.name || a.id).localeCompare(String(b.name || b.id)) ||
     String(a.author || '').localeCompare(String(b.author || '')));
   coreSet = new Set(d.selected);
+  autoCores = new Set(d.auto || []);
   renderCores();
 }
 function renderCores() {
   const q = $('coreQ').value.toLowerCase();
   const hits = cores.filter(c => !q ||
     (c.name + ' ' + c.author + ' ' + c.id + ' ' + (c.manufacturer || '')).toLowerCase().includes(q));
-  $('coreCount').textContent = coreSet.size + ' selected';
+  const autoOnly = [...autoCores].filter(id => !coreSet.has(id)).length;
+  $('coreCount').textContent = coreSet.size + ' selected' +
+    (autoOnly ? ' + ' + autoOnly + ' auto (from your games)' : '');
   let lastCat = '';
   $('coreList').innerHTML = hits.map(c => {
     const hdr = c.category !== lastCat
       ? '<h2 style="font-size:.95rem;margin:1rem 0 .4rem;color:var(--accent2)">' + esc(lastCat = c.category) + '</h2>' : '';
+    const auto = autoCores.has(c.id) && !coreSet.has(c.id);
     return hdr + '<li><input type="checkbox" data-core="' + esc(c.id) + '"' +
-      (coreSet.has(c.id) ? ' checked' : '') + (c.requiresLicense ? ' disabled' : '') + '>' +
+      ((coreSet.has(c.id) || auto) ? ' checked' : '') + ((c.requiresLicense || auto) ? ' disabled' : '') + '>' +
       '<span class="t">' + esc(c.name) +
       ' <span class="meta">' + esc(c.author) + ' · v' + esc(c.version) +
-      (c.requiresLicense ? ' · needs license — install manually' : '') + '</span></span>' +
+      (c.requiresLicense ? ' · needs license — install manually' : '') + '</span>' +
+      (auto ? ' <span class="badge" style="position:static;font-size:.68rem">auto — your sync set has these games</span>' : '') +
+      '</span>' +
       (c.year ? '<span class="meta">' + esc(c.manufacturer || '') + ' ' + esc(c.year) + '</span>' : '') +
       '</li>';
   }).join('') || '<div class="muted">no matches</div>';

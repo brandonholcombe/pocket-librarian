@@ -2,7 +2,7 @@
 // sync-set API, and the single-page app (served from web/app.html).
 import { unzipSync } from 'fflate';
 import crypto from 'node:crypto';
-import { listCores, ensureCore, getInventory, coreFilePath, getFirmware } from './provision.js';
+import { listCores, ensureCore, getInventory, coreFilePath, getFirmware, coresForFolders } from './provision.js';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import http from 'node:http';
@@ -478,9 +478,19 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
         return;
       }
       // ----- provisioning: cores + firmware -----
+      // folders implied by the user's sync set + always-synced support files
+      const autoFolders = () => {
+        const ids = (index.syncSets[user.id] ?? []).filter(id => index.roms[id]);
+        const bios = Object.keys(index.roms).filter(id => /bios|lynxboot|disksys|syscard/i.test(index.roms[id].file));
+        return [...new Set([...ids, ...bios].map(id => id.split('/')[0]))];
+      };
       if (p === '/api/cores') {
         if (!authed()) return;
-        json(res, 200, { cores: await listCores(), selected: index.coreSets?.[user.id] ?? [] });
+        json(res, 200, {
+          cores: await listCores(),
+          selected: index.coreSets?.[user.id] ?? [],
+          auto: await coresForFolders(autoFolders()),
+        });
         return;
       }
       if (p === '/api/coreset' && req.method === 'PUT') {
@@ -501,7 +511,10 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
           const fw = await getFirmware();
           out.firmware = { version: fw.version, file: fw.file, size: fw.size, url: '/api/firmware/bin' };
         } catch (e) { out.failures.push(`firmware: ${e.message}`); }
-        for (const id of index.coreSets?.[user.id] ?? []) {
+        const autoCores = await coresForFolders(autoFolders());
+        out.auto = autoCores;
+        const effective = [...new Set([...(index.coreSets?.[user.id] ?? []), ...autoCores])];
+        for (const id of effective) {
           try {
             const { version, files } = await ensureCore(id);
             out.cores.push({

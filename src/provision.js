@@ -53,6 +53,29 @@ export async function listCores() {
   }));
 }
 
+// Best core per platform folder, for auto-selection from sync sets
+const PREFERRED_CORES = {
+  gb: ['Spiritualized.GB'], gbc: ['Spiritualized.GBC'], gba: ['Spiritualized.GBA'],
+  nes: ['agg23.NES', 'Spiritualized.NES'], snes: ['agg23.SNES'],
+  genesis: ['ericlewis.Genesis', 'Spiritualized.Genesis'],
+  pce: ['agg23.PC Engine'], pcecd: ['Mazamars312.PC Engine CD'],
+  gg: ['Spiritualized.GG'], lynx: ['budude2.Lynx'],
+};
+
+export async function coresForFolders(folders) {
+  const byId = await getInventory();
+  const out = new Set();
+  for (const f of folders) {
+    let pick = PREFERRED_CORES[f]?.find(id => byId.has(id));
+    if (!pick) {
+      pick = [...byId.values()]
+        .find(c => c.platform_id === f && !/analogizer/i.test(c.identifier))?.identifier;
+    }
+    if (pick) out.add(pick);
+  }
+  return [...out];
+}
+
 // ---------- core files ----------
 const badSeg = seg => !seg || seg === '.' || seg === '..' || seg.startsWith('._');
 
