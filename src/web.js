@@ -49,6 +49,14 @@ const EXT_PLATFORM = {
   sfc: 'SNES', smc: 'SNES', md: 'Genesis', gen: 'Genesis',
   pce: 'PCE', chd: 'PCE-CD', gg: 'GG', lnx: 'Lynx', ngc: 'NGPC', ngp: 'NGPC',
 };
+
+// well-known BIOS/support files, recognized by name (extensions are ambiguous)
+const SUPPORT_FILES = [
+  [/^gba_bios\.bin$/i, 'GBA'], [/^lynxboot\.img$/i, 'Lynx'],
+  [/^disksys\.rom$/i, 'NES'], [/^syscard.*\.pce$/i, 'PCE-CD'],
+  [/^bios_cd_.*\.bin$/i, 'Sega CD'],
+];
+const supportPlatform = name => SUPPORT_FILES.find(([re]) => re.test(name))?.[1];
 const PLATFORM_BY_FOLDER = Object.fromEntries(Object.entries(FOLDERS).map(([p, f]) => [f, p]));
 
 // libretro-thumbnails system names, for boxart
@@ -403,7 +411,7 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
               for (const [entry, data] of Object.entries(entries)) {
                 const base = safeName(entry.split('/').pop());
                 if (!base || !data.length || entry.includes('__MACOSX')) continue;
-                const plat = EXT_PLATFORM[base.split('.').pop().toLowerCase()];
+                const plat = supportPlatform(base) ?? EXT_PLATFORM[base.split('.').pop().toLowerCase()];
                 if (!plat) { skipped.push(base); continue; }
                 const id = addRom(plat, base, Buffer.from(data));
                 added.push({ id, title: index.roms[id].title, platform: plat });
