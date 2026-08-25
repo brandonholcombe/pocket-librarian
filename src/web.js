@@ -53,8 +53,11 @@ const THUMB_SYS = {
 };
 
 // ---------- boxart ----------
-const normTitle = s => s.toLowerCase().replace(/\.png$/, '')
-  .replace(/\s*\([^)]*\)/g, '').replace(/[^a-z0-9]+/g, '');
+const ROMAN = { ii: '2', iii: '3', iv: '4', v: '5', vi: '6', vii: '7', viii: '8', ix: '9' };
+export const normTitle = s => s.toLowerCase().replace(/\.png$/, '')
+  .replace(/\s*\([^)]*\)/g, '').replace(/\s*\[[^\]]*\]/g, '')
+  .replace(/\b(ii|iii|iv|v|vi|vii|viii|ix)\b/g, m => ROMAN[m])
+  .replace(/[^a-z0-9]+/g, '');
 const artIndexes = new Map();   // folder -> Map(normTitle -> [full png names])
 const artMisses = new Set();    // negative cache for this process
 
@@ -105,7 +108,15 @@ async function serveArt(res, folder, title) {
   }
   if (artMisses.has(key)) { res.writeHead(404); res.end(); return; }
   const idx = await getArtIndex(folder);
-  const cands = idx?.get(normTitle(title));
+  const q = normTitle(title);
+  let cands = idx?.get(q);
+  if (!cands?.length && idx && q.length >= 6) {
+    // fuzzy fallback: containment either way, shortest (most base-game) key wins
+    const fuzzy = [...idx.keys()]
+      .filter(k => k.includes(q) || q.includes(k))
+      .sort((a, b) => a.length - b.length)[0];
+    if (fuzzy) cands = idx.get(fuzzy);
+  }
   if (!cands?.length) { artMisses.add(key); res.writeHead(404); res.end(); return; }
   const name = [...cands].sort((a, b) => regionRank(a) - regionRank(b))[0];
   const img = await fetch(
@@ -154,6 +165,14 @@ async function reconcile() {
     const platform = PLATFORM_BY_FOLDER[folder] ?? 'Other';
     for (const file of await fsp.readdir(dir)) {
       const id = `${folder}/${file}`;
+      if (file.endsWith('.uploading')) {
+        // a completed upload renames synchronously, so any .uploading file
+        // found at boot is a dead partial transfer
+        await fsp.rm(path.join(dir, file), { force: true });
+        delete index.roms[id];
+        changed = true;
+        continue;
+      }
       if (index.roms[id]) continue;
       const st = await fsp.stat(path.join(dir, file));
       if (!st.isFile()) continue;
@@ -220,7 +239,11 @@ const safeName = s => {
 
 // ---------- server ----------
 export function startWeb({ state, GAMES = [], onLibraryChange }) {
-  reconcile().catch(e => console.error('reconcile failed:', e));
+  // After reconciling files on disk, re-announce every stored ROM so wishlist
+  // flips missed at upload time (bulk copies, matcher fixes) heal on boot.
+  reconcile()
+    .then(() => { for (const r of Object.values(index.roms)) onLibraryChange?.(r); })
+    .catch(e => console.error('reconcile failed:', e));
 
   // catalog lookup for enriching stored ROMs with year/genre/developer
   const catalog = new Map(); // "<folder>|<normTitle>" -> {y,g,d}

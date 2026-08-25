@@ -3,7 +3,7 @@ import {
 } from 'discord.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startWeb } from './web.js';
+import { startWeb, normTitle } from './web.js';
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const APP_ID = process.env.DISCORD_APP_ID;
@@ -283,8 +283,7 @@ startWeb({
   GAMES,
   // A freshly uploaded ROM that matches a requested title flips it to owned.
   onLibraryChange(rom) {
-    const norm = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
-    const entry = state.entries.find(e => e.status === 'requested' && norm(e.title) === norm(rom.title));
+    const entry = state.entries.find(e => e.status === 'requested' && normTitle(e.title) === normTitle(rom.title));
     if (!entry) return;
     entry.status = 'owned';
     entry.gotAt = new Date().toISOString();
