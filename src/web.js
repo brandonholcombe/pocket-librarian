@@ -42,6 +42,83 @@ export const FOLDERS = {
 };
 const PLATFORM_BY_FOLDER = Object.fromEntries(Object.entries(FOLDERS).map(([p, f]) => [f, p]));
 
+// libretro-thumbnails system names, for boxart
+const THUMB_SYS = {
+  gb: 'Nintendo - Game Boy', gbc: 'Nintendo - Game Boy Color',
+  gba: 'Nintendo - Game Boy Advance', nes: 'Nintendo - Nintendo Entertainment System',
+  snes: 'Nintendo - Super Nintendo Entertainment System',
+  genesis: 'Sega - Mega Drive - Genesis', pce: 'NEC - PC Engine - TurboGrafx 16',
+  pcecd: 'NEC - PC Engine CD - TurboGrafx-CD', segacd: 'Sega - Mega-CD - Sega CD',
+  gg: 'Sega - Game Gear', lynx: 'Atari - Lynx', ngpc: 'SNK - Neo Geo Pocket Color',
+};
+
+// ---------- boxart ----------
+const normTitle = s => s.toLowerCase().replace(/\.png$/, '')
+  .replace(/\s*\([^)]*\)/g, '').replace(/[^a-z0-9]+/g, '');
+const artIndexes = new Map();   // folder -> Map(normTitle -> [full png names])
+const artMisses = new Set();    // negative cache for this process
+
+async function getArtIndex(folder) {
+  if (artIndexes.has(folder)) return artIndexes.get(folder);
+  const sys = THUMB_SYS[folder];
+  if (!sys) return null;
+  const cacheFile = path.join(DATA_DIR, 'art-index', folder + '.json');
+  let names = null;
+  try {
+    const st = fs.statSync(cacheFile);
+    if (Date.now() - st.mtimeMs < 30 * 86400_000) names = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+  } catch { /* no cache yet */ }
+  if (!names) {
+    const html = await fetch(
+      `https://thumbnails.libretro.com/${encodeURIComponent(sys)}/Named_Boxarts/`,
+    ).then(r => (r.ok ? r.text() : null)).catch(() => null);
+    if (!html) return null;
+    names = [...html.matchAll(/href="([^"]+\.png)"/g)].map(m => decodeURIComponent(m[1]));
+    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+    fs.writeFileSync(cacheFile, JSON.stringify(names));
+  }
+  const byNorm = new Map();
+  for (const n of names) {
+    const k = normTitle(n);
+    if (!byNorm.has(k)) byNorm.set(k, []);
+    byNorm.get(k).push(n);
+  }
+  artIndexes.set(folder, byNorm);
+  return byNorm;
+}
+
+const REGION_RANK = ['(usa', '(world', '(europe', '(japan'];
+const regionRank = n => {
+  const l = n.toLowerCase();
+  const i = REGION_RANK.findIndex(r => l.includes(r));
+  return i === -1 ? REGION_RANK.length : i;
+};
+
+async function serveArt(res, folder, title) {
+  const key = `${folder}/${normTitle(title)}`;
+  const cacheFile = path.join(DATA_DIR, 'art-cache', folder, normTitle(title) + '.png');
+  const headers = { 'content-type': 'image/png', 'cache-control': 'public, max-age=604800' };
+  if (fs.existsSync(cacheFile)) {
+    res.writeHead(200, headers);
+    fs.createReadStream(cacheFile).pipe(res);
+    return;
+  }
+  if (artMisses.has(key)) { res.writeHead(404); res.end(); return; }
+  const idx = await getArtIndex(folder);
+  const cands = idx?.get(normTitle(title));
+  if (!cands?.length) { artMisses.add(key); res.writeHead(404); res.end(); return; }
+  const name = [...cands].sort((a, b) => regionRank(a) - regionRank(b))[0];
+  const img = await fetch(
+    `https://thumbnails.libretro.com/${encodeURIComponent(THUMB_SYS[folder])}/Named_Boxarts/${encodeURIComponent(name)}`,
+  ).catch(() => null);
+  if (!img?.ok) { artMisses.add(key); res.writeHead(404); res.end(); return; }
+  const buf = Buffer.from(await img.arrayBuffer());
+  fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+  fs.writeFileSync(cacheFile, buf);
+  res.writeHead(200, headers);
+  res.end(buf);
+}
+
 const APP_HTML = fs.readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'web', 'app.html'), 'utf8');
 
@@ -142,8 +219,20 @@ const safeName = s => {
 };
 
 // ---------- server ----------
-export function startWeb({ state, onLibraryChange }) {
+export function startWeb({ state, GAMES = [], onLibraryChange }) {
   reconcile().catch(e => console.error('reconcile failed:', e));
+
+  // catalog lookup for enriching stored ROMs with year/genre/developer
+  const catalog = new Map(); // "<folder>|<normTitle>" -> {y,g,d}
+  for (const g of GAMES) {
+    const k = `${FOLDERS[g.p] ?? 'other'}|${normTitle(g.t)}`;
+    if (!catalog.has(k)) catalog.set(k, g);
+  }
+  const enrich = (id, r) => {
+    const meta = catalog.get(`${id.split('/')[0]}|${normTitle(r.title)}`) ?? {};
+    const region = r.file.match(/\(([^)]+)\)/)?.[1];
+    return { id, ...r, year: meta.y, genre: meta.g, developer: meta.d, region };
+  };
 
   const pending = new Map(); // oauth state -> ts
 
@@ -203,14 +292,16 @@ export function startWeb({ state, onLibraryChange }) {
         res.end(); return;
       }
 
-      // ----- public checklist -----
+      // ----- public checklist + boxart -----
       if (p === '/api/me') { json(res, 200, { user: user ?? null }); return; }
       if (p === '/api/state') { json(res, 200, { entries: state.entries }); return; }
+      const artReq = p.match(/^\/api\/art\/([a-z]+)\/(.+)$/);
+      if (artReq) { await serveArt(res, artReq[1], decodeURIComponent(artReq[2])); return; }
 
       // ----- library -----
       if (p === '/api/roms' && req.method === 'GET') {
         if (!authed()) return;
-        json(res, 200, { roms: Object.entries(index.roms).map(([id, r]) => ({ id, ...r })) });
+        json(res, 200, { roms: Object.entries(index.roms).map(([id, r]) => enrich(id, r)) });
         return;
       }
       if (p === '/api/rom' && req.method === 'PUT') {

@@ -3,43 +3,88 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pocket Library</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: dark;
+    --bg: #0f0e13; --panel: #1a1822; --panel2: #242030; --ink: #e8e6f0;
+    --dim: #8b879c; --accent: #8c52ff; --accent2: #b9aaff; --ok: #7ee2a8; --warn: #ffcf7d; }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, system-ui, sans-serif;
-         background: #131217; color: #e8e6f0; }
-  .wrap { max-width: 760px; margin: 0 auto; padding: 1.2rem; }
+         background: var(--bg); color: var(--ink); }
+  .wrap { max-width: 1150px; margin: 0 auto; padding: 1.2rem; }
   header { display: flex; align-items: center; gap: 1rem; }
   h1 { font-size: 1.3rem; flex: 1; margin: .4rem 0; }
   nav { display: flex; gap: .4rem; margin: 1rem 0; }
-  nav button { background: #1e1c26; color: #e8e6f0; border: 0; padding: .5rem .9rem;
+  nav button { background: var(--panel); color: var(--ink); border: 0; padding: .5rem .9rem;
                border-radius: 8px; cursor: pointer; font-size: .9rem; }
-  nav button.on { background: #8c52ff; }
-  button.primary { background: #8c52ff; color: #fff; border: 0; padding: .55rem 1rem;
+  nav button.on { background: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border: 0; padding: .55rem 1rem;
                    border-radius: 8px; cursor: pointer; }
+  button.ghost { background: var(--panel2); color: var(--ink); border: 0;
+                 padding: .55rem 1rem; border-radius: 8px; cursor: pointer; }
   button:disabled { opacity: .4; cursor: default; }
-  input[type=search], select { background: #1e1c26; border: 1px solid #333;
-    color: #e8e6f0; padding: .5rem .7rem; border-radius: 8px; font-size: .95rem; }
-  input[type=search] { width: 100%; margin: .4rem 0; }
-  ul { list-style: none; padding: 0; margin: .6rem 0; }
-  li { padding: .5rem .7rem; border-radius: 8px; background: #1e1c26;
-       margin-bottom: .3rem; display: flex; gap: .6rem; align-items: center; }
-  li .t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  .meta { color: #8b879c; font-size: .78rem; white-space: nowrap; }
-  .muted { color: #8b879c; }
-  .drop { border: 2px dashed #444; border-radius: 10px; padding: 1.2rem;
-          text-align: center; color: #8b879c; margin: .8rem 0; }
-  .drop.hot { border-color: #8c52ff; color: #b9aaff; }
-  .bar { height: 6px; background: #1e1c26; border-radius: 3px; overflow: hidden; margin: .3rem 0; }
-  .bar > div { height: 100%; background: #8c52ff; width: 0%; }
-  .ok { color: #7ee2a8; } .warn { color: #ffcf7d; }
-  li.owned { opacity: .65; } li.owned .t { text-decoration: line-through; }
+  .toolbar { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; margin: .6rem 0 1rem; }
+  input[type=search], select { background: var(--panel); border: 1px solid #322e40;
+    color: var(--ink); padding: .5rem .7rem; border-radius: 8px; font-size: .95rem; }
+  input[type=search] { flex: 1; min-width: 200px; }
+  .muted { color: var(--dim); }
+  .drop { border: 2px dashed #3a3548; border-radius: 10px; padding: .8rem 1rem;
+          text-align: center; color: var(--dim); margin: .6rem 0; font-size: .85rem; }
+  .drop.hot { border-color: var(--accent); color: var(--accent2); }
+
+  /* --- cover grid --- */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+          gap: 14px; }
+  .grid.small { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+  .card { background: var(--panel); border-radius: 12px; overflow: hidden; cursor: pointer;
+          transition: transform .15s, box-shadow .15s; position: relative; }
+  .card:hover { transform: translateY(-4px) scale(1.03);
+                box-shadow: 0 10px 26px rgba(0,0,0,.55); z-index: 2; }
+  .cover { width: 100%; aspect-ratio: 1 / 1; background: var(--panel2);
+           display: flex; align-items: center; justify-content: center; position: relative; }
+  .cover img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cover .ph { font-size: 2.2rem; opacity: .5; }
+  .badge { position: absolute; top: 8px; right: 8px; background: var(--accent);
+           color: #fff; border-radius: 999px; font-size: .75rem; padding: .15rem .5rem;
+           box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+  .badge.want { background: #d98324; }
+  .cinfo { padding: .5rem .6rem .6rem; }
+  .cinfo .t { font-size: .85rem; line-height: 1.25; overflow: hidden; display: -webkit-box;
+              -webkit-line-clamp: 2; -webkit-box-orient: vertical; min-height: 2.1em; }
+  .cinfo .m { font-size: .72rem; color: var(--dim); margin-top: .2rem; }
+  .chip { display: inline-block; background: var(--panel2); border-radius: 5px;
+          padding: .05rem .4rem; margin-right: .3rem; }
+
+  /* --- detail modal --- */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: flex;
+             align-items: center; justify-content: center; padding: 1rem; z-index: 10; }
+  .modal { background: var(--panel); border-radius: 16px; max-width: 640px; width: 100%;
+           max-height: 90vh; overflow-y: auto; display: flex; gap: 1.1rem; padding: 1.1rem;
+           flex-wrap: wrap; }
+  .modal .art { flex: 0 0 220px; max-width: 220px; }
+  .modal .art .cover { border-radius: 10px; overflow: hidden; }
+  .modal .info { flex: 1; min-width: 240px; }
+  .modal h2 { margin: .1rem 0 .6rem; font-size: 1.2rem; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: .25rem .8rem; margin: 0 0 1rem;
+       font-size: .88rem; }
+  dt { color: var(--dim); } dd { margin: 0; overflow-wrap: anywhere; }
+  .actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+
+  .bar { height: 6px; background: var(--panel); border-radius: 3px; overflow: hidden; margin: .3rem 0; }
+  .bar > div { height: 100%; background: var(--accent); width: 0%; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); }
+  li { list-style: none; }
+  ul.plain { padding: 0; margin: .6rem 0; }
+  ul.plain li { padding: .5rem .7rem; border-radius: 8px; background: var(--panel);
+                margin-bottom: .3rem; display: flex; gap: .6rem; align-items: baseline; }
+  ul.plain .t { flex: 1; }
+  .meta { color: var(--dim); font-size: .78rem; white-space: nowrap; }
 </style></head><body><div class="wrap">
 <header>
   <h1>🎮 Pocket Library</h1>
   <span id="who" class="muted"></span>
   <button id="loginBtn" class="primary" hidden onclick="location='/auth/login'">Log in with Discord</button>
-  <button id="logoutBtn" hidden onclick="location='/auth/logout'">Log out</button>
+  <button id="logoutBtn" class="ghost" hidden onclick="location='/auth/logout'">Log out</button>
 </header>
 <nav id="tabs" hidden>
   <button data-tab="library" class="on">Library</button>
@@ -48,33 +93,44 @@
 </nav>
 
 <section id="tab-library" hidden>
-  <div class="drop" id="drop">Drop ROM files here (or click) to upload —
-    platform is guessed from the extension
+  <div class="toolbar">
+    <input type="search" id="q" placeholder="Search the library…">
+    <select id="platFilter"><option value="">All platforms</option></select>
+    <select id="setFilter">
+      <option value="">Everything</option>
+      <option value="in">In my sync set</option>
+      <option value="out">Not in my sync set</option>
+    </select>
+  </div>
+  <div class="drop" id="drop">Drop ROM files here (or click) to upload — platform guessed from extension
     <select id="platformSel"><option value="">auto-detect</option></select>
     <input type="file" id="filePick" multiple hidden>
   </div>
   <div id="upStatus"></div>
-  <input type="search" id="q" placeholder="Search the library…">
-  <div class="muted" id="libCount"></div>
-  <ul id="romList"></ul>
+  <div class="muted" id="libCount" style="margin:.4rem 0"></div>
+  <div class="grid" id="romGrid"></div>
 </section>
 
 <section id="tab-wishlist" hidden>
-  <h2 style="font-size:1rem">🎯 Requested</h2><ul id="requested"></ul>
-  <h2 style="font-size:1rem">☑ In library</h2><ul id="ownedList"></ul>
+  <h2 style="font-size:1rem">🎯 Requested</h2>
+  <div class="grid small" id="wishGrid"></div>
+  <h2 style="font-size:1rem;margin-top:1.4rem">☑ In library</h2>
+  <div class="grid small" id="ownedGrid"></div>
 </section>
 
 <section id="tab-sync" hidden>
-  <p class="muted">Pick your SD card (its root folder). Works in Chrome and Edge
-  on Mac & Windows. The checked games in <b>Library</b> are what gets synced.</p>
+  <p class="muted">Pick your SD card (its root folder). Works in Chrome and Edge on Mac & Windows.
+  The games in your sync set (Library tab) are what gets synced.</p>
   <button class="primary" id="pickCard">Choose SD card…</button>
   <div id="syncReport"></div>
   <button class="primary" id="goSync" hidden>Download missing to card</button>
   <div id="syncProg"></div>
 </section>
 
+<div class="overlay" id="overlay" hidden></div>
+
 <footer class="muted" style="margin-top:2rem;font-size:.75rem">
-  pocket-librarian · requests via /request in Discord</footer>
+  pocket-librarian · requests via /request in Discord · box art via libretro-thumbnails</footer>
 </div>
 <script>
 const $ = id => document.getElementById(id);
@@ -86,6 +142,8 @@ const EXT = { gb:'GB', gbc:'GBC', gba:'GBA', nes:'NES', sfc:'SNES', smc:'SNES',
 const FOLDERS = { GB:'gb', GBC:'gbc', GBA:'gba', NES:'nes', SNES:'snes',
   Genesis:'genesis', PCE:'pce', 'PCE-CD':'pcecd', 'Sega CD':'segacd',
   GG:'gg', Lynx:'lynx', NGPC:'ngpc', Other:'other' };
+const artUrl = (platform, title) =>
+  '/api/art/' + (FOLDERS[platform] || 'other') + '/' + encodeURIComponent(title);
 
 let me = null, roms = [], syncSet = new Set();
 
@@ -95,10 +153,12 @@ async function boot() {
   $('loginBtn').hidden = !!me;
   $('logoutBtn').hidden = !me;
   $('tabs').hidden = !me;
-  if (!me) { showTab('wishlist'); $('tabs').hidden = true; loadWishlist(); return; }
+  if (!me) { showTab('wishlist'); loadWishlist(); return; }
   Object.keys(FOLDERS).forEach(p => {
-    const o = document.createElement('option'); o.value = o.textContent = p;
-    $('platformSel').appendChild(o);
+    for (const sel of ['platformSel', 'platFilter']) {
+      const o = document.createElement('option'); o.value = o.textContent = p;
+      $(sel).appendChild(o);
+    }
   });
   showTab('library');
   await Promise.all([loadLibrary(), loadWishlist()]);
@@ -112,7 +172,7 @@ function showTab(name) {
 }
 $('tabs').addEventListener('click', e => e.target.dataset.tab && showTab(e.target.dataset.tab));
 
-// ---- library ----
+// ---- library grid ----
 async function loadLibrary() {
   const [r, s] = await Promise.all([
     fetch('/api/roms').then(r => r.json()),
@@ -122,28 +182,67 @@ async function loadLibrary() {
   syncSet = new Set(s.ids);
   renderRoms();
 }
+function coverHtml(platform, title, extra) {
+  return '<div class="cover">' + (extra || '') +
+    '<img loading="lazy" src="' + artUrl(platform, title) + '" alt="" ' +
+    'onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'ph\',textContent:\'🕹️\'}))">' +
+    '</div>';
+}
 function renderRoms() {
   const q = $('q').value.toLowerCase();
-  const hits = roms.filter(r => !q || r.title.toLowerCase().includes(q) || r.file.toLowerCase().includes(q));
-  $('libCount').textContent = hits.length + ' of ' + roms.length + ' games — checked ones are in your sync set (' + syncSet.size + ')';
-  $('romList').innerHTML = hits.map(r =>
-    '<li><input type="checkbox" data-id="' + esc(r.id) + '"' + (syncSet.has(r.id) ? ' checked' : '') + '>' +
-    '<span class="t">' + esc(r.title) + '</span>' +
-    '<span class="meta">' + esc(r.platform) + ' · ' + fmtMB(r.size) + '</span></li>'
-  ).join('') || '<div class="muted">nothing here yet — upload some ROMs above</div>';
+  const pf = $('platFilter').value;
+  const sf = $('setFilter').value;
+  const hits = roms.filter(r =>
+    (!q || r.title.toLowerCase().includes(q) || r.file.toLowerCase().includes(q)) &&
+    (!pf || r.platform === pf) &&
+    (!sf || (sf === 'in') === syncSet.has(r.id)));
+  $('libCount').textContent = hits.length + ' of ' + roms.length +
+    ' games · sync set: ' + syncSet.size;
+  $('romGrid').innerHTML = hits.map((r, i) => {
+    const idx = roms.indexOf(r);
+    return '<div class="card" data-i="' + idx + '">' +
+      coverHtml(r.platform, r.title, syncSet.has(r.id) ? '<span class="badge">✓ sync</span>' : '') +
+      '<div class="cinfo"><div class="t">' + esc(r.title) + '</div>' +
+      '<div class="m"><span class="chip">' + esc(r.platform) + '</span>' +
+      (r.year ? esc(r.year) : '') + '</div></div></div>';
+  }).join('') || '<div class="muted">nothing here yet — upload some ROMs above</div>';
 }
-$('q').addEventListener('input', renderRoms);
-let saveTimer;
-$('romList').addEventListener('change', e => {
-  const id = e.target.dataset.id;
-  if (!id) return;
-  e.target.checked ? syncSet.add(id) : syncSet.delete(id);
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => fetch('/api/syncset', {
-    method: 'PUT', body: JSON.stringify([...syncSet]),
-  }), 400);
-  renderRoms();
+for (const id of ['q', 'platFilter', 'setFilter'])
+  $(id).addEventListener('input', renderRoms);
+$('romGrid').addEventListener('click', e => {
+  const card = e.target.closest('.card');
+  if (card) openModal(roms[Number(card.dataset.i)]);
 });
+
+// ---- detail modal ----
+function openModal(r) {
+  const inSet = syncSet.has(r.id);
+  const rows = [
+    ['Platform', r.platform], ['Year', r.year], ['Genre', r.genre],
+    ['Developer', r.developer], ['Region', r.region], ['Size', fmtMB(r.size)],
+    ['File', r.file], ['Added by', r.by], ['SHA1', r.sha1 ? r.sha1.slice(0, 12) + '…' : null],
+  ].filter(x => x[1]);
+  $('overlay').innerHTML = '<div class="modal">' +
+    '<div class="art">' + coverHtml(r.platform, r.title) + '</div>' +
+    '<div class="info"><h2>' + esc(r.title) + '</h2><dl>' +
+    rows.map(([k, v]) => '<dt>' + k + '</dt><dd>' + esc(v) + '</dd>').join('') +
+    '</dl><div class="actions">' +
+    '<button class="primary" id="mSync">' + (inSet ? '✓ In sync set — remove' : '+ Add to sync set') + '</button>' +
+    '<a class="ghost" style="text-decoration:none;padding:.55rem 1rem;border-radius:8px;background:var(--panel2);color:var(--ink)" ' +
+    'href="/api/rom/' + esc(r.id.split('/')[0]) + '/' + encodeURIComponent(r.file) + '">Download</a>' +
+    '<button class="ghost" id="mClose">Close</button>' +
+    '</div></div></div>';
+  $('overlay').hidden = false;
+  $('mClose').onclick = closeModal;
+  $('mSync').onclick = () => {
+    syncSet.has(r.id) ? syncSet.delete(r.id) : syncSet.add(r.id);
+    fetch('/api/syncset', { method: 'PUT', body: JSON.stringify([...syncSet]) });
+    closeModal(); renderRoms();
+  };
+}
+function closeModal() { $('overlay').hidden = true; $('overlay').innerHTML = ''; }
+$('overlay').addEventListener('click', e => { if (e.target === $('overlay')) closeModal(); });
+addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 // ---- upload ----
 const drop = $('drop');
@@ -165,22 +264,24 @@ async function uploadFiles(files) {
     if (!res.ok) { $('upStatus').innerHTML = '<span class="warn">Failed: ' + esc(f.name) + '</span>'; return; }
   }
   $('upStatus').innerHTML = '<span class="ok">Uploaded ' + files.length + ' file(s)</span>';
-  await loadLibrary();
+  await Promise.all([loadLibrary(), loadWishlist()]);
 }
 
 // ---- wishlist ----
 async function loadWishlist() {
   const s = await (await fetch('/api/state')).json();
-  const render = (elId, status, cls) => {
+  const render = (elId, status, badge) => {
     const items = s.entries.filter(e => e.status === status);
     $(elId).innerHTML = items.map(e =>
-      '<li class="' + cls + '"><span class="t">' + esc(e.title) +
-      ' <span class="meta">(' + esc(e.platform) + ')</span></span>' +
-      '<span class="meta">' + esc(e.requestedBy || '') + '</span></li>'
+      '<div class="card" style="cursor:default">' +
+      coverHtml(e.platform, e.title, badge) +
+      '<div class="cinfo"><div class="t">' + esc(e.title) + '</div>' +
+      '<div class="m"><span class="chip">' + esc(e.platform) + '</span>' +
+      esc(e.requestedBy || '') + '</div></div></div>'
     ).join('') || '<div class="muted">none</div>';
   };
-  render('requested', 'requested', '');
-  render('ownedList', 'owned', 'owned');
+  render('wishGrid', 'requested', '<span class="badge want">wanted</span>');
+  render('ownedGrid', 'owned', '<span class="badge">☑</span>');
 }
 
 // ---- sync to SD ----
@@ -204,8 +305,7 @@ async function scanCard() {
     let found = false;
     try {
       const dir = await (await assets.getDirectoryHandle(item.folder)).getDirectoryHandle('common');
-      const fh = await dir.getFileHandle(item.file);
-      const f = await fh.getFile();
+      const f = await (await dir.getFileHandle(item.file)).getFile();
       found = f.size === item.size;
     } catch { /* not there */ }
     found ? present++ : missing.push(item);
@@ -213,7 +313,7 @@ async function scanCard() {
   $('syncReport').innerHTML =
     '<p>Sync set: <b>' + manifest.length + '</b> games · already on card: <b class="ok">' +
     present + '</b> · missing: <b class="' + (missing.length ? 'warn' : 'ok') + '">' + missing.length + '</b></p>' +
-    (missing.length ? '<ul>' + missing.map(m =>
+    (missing.length ? '<ul class="plain">' + missing.map(m =>
       '<li><span class="t">' + esc(m.file) + '</span><span class="meta">' +
       esc(m.folder) + ' · ' + fmtMB(m.size) + '</span></li>').join('') + '</ul>' : '');
   $('goSync').hidden = missing.length === 0;

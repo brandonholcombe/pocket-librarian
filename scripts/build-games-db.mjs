@@ -20,18 +20,44 @@ const PLATFORMS = {
   'NGPC':    'no-intro/SNK - Neo Geo Pocket Color.dat',
 };
 
+async function fetchText(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
+}
+
+const clean = s => s.replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+
+// metadat/{releaseyear,genre,developer}/<system>.dat: game blocks keyed by
+// comment "<full no-intro name>" with a single field.
+async function fetchMeta(kind, field, datName) {
+  const map = new Map(); // cleaned title -> value
+  try {
+    const text = await fetchText(BASE + `${kind}/` + encodeURIComponent(datName));
+    const re = new RegExp(`game \\(\\s*\\n\\s*comment "([^"]+)"\\s*\\n\\s*${field} "([^"]+)"`, 'g');
+    for (const m of text.matchAll(re)) {
+      const key = clean(m[1]).toLowerCase();
+      if (!map.has(key)) map.set(key, m[2]);
+    }
+  } catch { /* metadata is best-effort */ }
+  return map;
+}
+
 const out = [];
 for (const [platform, file] of Object.entries(PLATFORMS)) {
-  const url = BASE + file.split("/").map(encodeURIComponent).join("/");
   let text;
   try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    text = await res.text();
+    text = await fetchText(BASE + file.split('/').map(encodeURIComponent).join('/'));
   } catch (e) {
     console.error(`SKIP ${platform}: ${e.message}`);
     continue;
   }
+  const datName = file.split('/')[1];
+  const [years, genres, devs] = await Promise.all([
+    fetchMeta('releaseyear', 'releaseyear', datName),
+    fetchMeta('genre', 'genre', datName),
+    fetchMeta('developer', 'developer', datName),
+  ]);
   const seen = new Set();
   let count = 0;
   // game blocks look like: game (\n\tname "Title (Region) (Rev 1)"\n ...
@@ -39,15 +65,19 @@ for (const [platform, file] of Object.entries(PLATFORMS)) {
     const raw = m[1];
     if (raw.includes('[BIOS]')) continue;
     // Strip No-Intro parenthetical tags (region, rev, etc.)
-    const title = raw.replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+    const title = clean(raw);
     if (!title) continue;
     const key = title.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ t: title, p: platform });
+    const entry = { t: title, p: platform };
+    if (years.get(key)) entry.y = years.get(key);
+    if (genres.get(key)) entry.g = genres.get(key);
+    if (devs.get(key)) entry.d = devs.get(key);
+    out.push(entry);
     count++;
   }
-  console.log(`${platform}: ${count} titles`);
+  console.log(`${platform}: ${count} titles (${[...seen].filter(k => years.has(k)).length} with year)`);
 }
 
 out.sort((a, b) => a.t.localeCompare(b.t) || a.p.localeCompare(b.p));

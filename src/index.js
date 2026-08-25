@@ -280,6 +280,7 @@ client.once('clientReady', async () => {
 
 startWeb({
   state,
+  GAMES,
   // A freshly uploaded ROM that matches a requested title flips it to owned.
   onLibraryChange(rom) {
     const norm = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
