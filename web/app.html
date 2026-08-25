@@ -619,25 +619,44 @@ async function scanCard() {
 
 $('goSync').addEventListener('click', async () => {
   $('goSync').disabled = true;
-  let done = 0, failed = 0;
+  let done = 0;
+  const failures = [];
   const total = todo.coreFiles.length + todo.games.length + (todo.fw ? 1 : 0);
   const step = async (label, rel, url, size) => {
-    $('syncProg').innerHTML = '(' + (done + 1) + '/' + total + ') ' + label + ' <b>' +
-      esc(rel.split('/').at(-1)) + '</b><div class="bar"><div id="pb"></div></div>';
-    const res = await fetch(url);
-    if (!res.ok) { failed++; return; }
-    await writeCardFile(cardHandle, rel, res, size,
-      p => { $('pb').style.width = Math.round(p * 100) + '%'; });
-    done++;
+    const name = rel.split('/').at(-1);
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      $('syncProg').innerHTML = '(' + (done + failures.length + 1) + '/' + total + ') ' + label + ' <b>' +
+        esc(name) + '</b>' + (attempt > 1 ? ' <span class="warn">(retry)</span>' : '') +
+        '<div class="bar"><div id="pb"></div></div>';
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('server returned ' + res.status);
+        await writeCardFile(cardHandle, rel, res, size,
+          p => { $('pb').style.width = Math.round(p * 100) + '%'; });
+        done++;
+        return;
+      } catch (e) {
+        if (attempt === 2) { failures.push(name + ' — ' + (e.name || 'Error') + ': ' + e.message); return; }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
   };
-  for (const f of todo.coreFiles) await step('core file', f.path, f.url, f.size);
-  if (todo.fw) await step('firmware', todo.fw.file, todo.fw.url, todo.fw.size);
-  for (const name of todo.staleFw)
-    await cardHandle.removeEntry(name).catch(() => {});
-  for (const g of todo.games) await step('game', g.rel, '/api/rom/' + g.folder + '/' + encodeURIComponent(g.file), g.size);
-  $('syncProg').innerHTML = failed
-    ? '<p class="warn">' + done + ' written, ' + failed + ' failed — rescan and retry.</p>'
-    : '<p class="ok">Done — ' + done + ' file(s) written. Eject the card; the Pocket installs new firmware on boot.</p>';
+  try {
+    for (const f of todo.coreFiles) await step('core file', f.path, f.url, f.size);
+    if (todo.fw) await step('firmware', todo.fw.file, todo.fw.url, todo.fw.size);
+    for (const name of todo.staleFw)
+      await cardHandle.removeEntry(name).catch(() => {});
+    for (const g of todo.games) await step('game', g.rel, '/api/rom/' + g.folder + '/' + encodeURIComponent(g.file), g.size);
+  } catch (e) {
+    failures.push('sync aborted — ' + (e.name || 'Error') + ': ' + e.message);
+  }
+  $('syncProg').innerHTML = failures.length
+    ? '<p class="warn">' + done + ' written, ' + failures.length + ' failed:</p><ul class="plain">' +
+      failures.map(f => '<li class="warn">' + esc(f) + '</li>').join('') +
+      '</ul><p class="muted">Card write errors usually mean the card remounted, the reader is flaky, or the ' +
+      'card itself is bad. Rescan to retry just the missing files — if the same file keeps failing, test the ' +
+      'card in Disk Utility (First Aid) or try another reader.</p>'
+    : '<p class="ok">Done — ' + done + ' file(s) written and verified present. Eject the card; the Pocket installs new firmware on boot.</p>';
   $('goSync').disabled = false;
   await scanCard();
 });
