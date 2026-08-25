@@ -512,7 +512,7 @@ export function startWeb({ state, GAMES = [], onLibraryChange }) {
         // BIOS/support files always sync, regardless of anyone's sync set
         const chosen = (index.syncSets[user.id] ?? []).filter(id => index.roms[id]);
         const bios = Object.keys(index.roms)
-          .filter(id => /bios/i.test(index.roms[id].file) && !chosen.includes(id));
+          .filter(id => /bios|lynxboot|disksys|syscard/i.test(index.roms[id].file) && !chosen.includes(id));
         const items = [...chosen, ...bios]
           .map(id => {
             const r = index.roms[id];

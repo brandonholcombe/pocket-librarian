@@ -335,8 +335,14 @@ async function uploadFiles(files) {
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     const ext = f.name.split('.').pop().toLowerCase();
+    const lower = f.name.toLowerCase();
+    const SUPPORT = [
+      [/^gba_bios\.bin$/, 'GBA'], [/^lynxboot\.img$/, 'Lynx'],
+      [/^disksys\.rom$/, 'NES'], [/^syscard.*\.pce$/, 'PCE-CD'],
+      [/^bios_cd_.*\.bin$/, 'Sega CD'],
+    ];
     const platform = $('platformSel').value ||
-      (f.name.toLowerCase() === 'gba_bios.bin' ? 'GBA' : EXT[ext]) || 'Other';
+      SUPPORT.find(([re]) => re.test(lower))?.[1] || EXT[ext] || 'Other';
     const isZip = ext === 'zip' && platform !== 'Arcade';
     $('upStatus').innerHTML =
       '<b>' + esc(f.name) + '</b> <span class="muted">(' +
