@@ -103,7 +103,8 @@
       <option value="out">Not in my sync set</option>
     </select>
   </div>
-  <div class="drop" id="drop">Drop ROM files here (or click) to upload — platform guessed from extension
+  <div class="drop" id="drop">Drop ROM files or zips here (or click) — zips are extracted automatically;
+    pick <b>Arcade</b> to keep a zip intact as an arcade romset
     <select id="platformSel"><option value="">auto-detect</option></select>
     <input type="file" id="filePick" multiple hidden>
   </div>
@@ -142,7 +143,7 @@ const EXT = { gb:'GB', gbc:'GBC', gba:'GBA', nes:'NES', sfc:'SNES', smc:'SNES',
   ngc:'NGPC', ngp:'NGPC' };
 const FOLDERS = { GB:'gb', GBC:'gbc', GBA:'gba', NES:'nes', SNES:'snes',
   Genesis:'genesis', PCE:'pce', 'PCE-CD':'pcecd', 'Sega CD':'segacd',
-  GG:'gg', Lynx:'lynx', NGPC:'ngpc', Other:'other' };
+  GG:'gg', Lynx:'lynx', NGPC:'ngpc', Arcade:'arcade', Other:'other' };
 const artUrl = (platform, title) =>
   '/api/art/' + (FOLDERS[platform] || 'other') + '/' + encodeURIComponent(title);
 
@@ -255,16 +256,55 @@ drop.addEventListener('drop', e => {
   e.preventDefault(); drop.classList.remove('hot');
   uploadFiles([...e.dataTransfer.files]);
 });
+let uploading = false;
+addEventListener('beforeunload', e => { if (uploading) e.preventDefault(); });
+
+function putWithProgress(url, file, onProg) {
+  return new Promise(resolve => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.upload.onprogress = e => e.lengthComputable && onProg(e.loaded / e.total);
+    xhr.onload = () => resolve({ ok: xhr.status === 200, body: safeJson(xhr.responseText) });
+    xhr.onerror = () => resolve({ ok: false, body: { error: 'network error' } });
+    xhr.send(file);
+  });
+}
+const safeJson = s => { try { return JSON.parse(s); } catch { return {}; } };
+
 async function uploadFiles(files) {
-  for (const f of files) {
+  uploading = true;
+  let games = 0, extracted = 0;
+  const failed = [], skipped = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
     const ext = f.name.split('.').pop().toLowerCase();
     const platform = $('platformSel').value || EXT[ext] || 'Other';
-    $('upStatus').innerHTML = 'Uploading <b>' + esc(f.name) + '</b> (' + esc(platform) + ')…';
-    const res = await fetch('/api/rom?platform=' + encodeURIComponent(platform) +
-      '&name=' + encodeURIComponent(f.name), { method: 'PUT', body: f });
-    if (!res.ok) { $('upStatus').innerHTML = '<span class="warn">Failed: ' + esc(f.name) + '</span>'; return; }
+    const isZip = ext === 'zip' && platform !== 'Arcade';
+    $('upStatus').innerHTML =
+      '<b>' + esc(f.name) + '</b> <span class="muted">(' +
+      (isZip ? 'zip — will extract' : esc(platform)) + ') · file ' + (i + 1) + ' of ' + files.length +
+      '</span><div class="bar"><div id="upb"></div></div><div id="upphase" class="muted"></div>';
+    const r = await putWithProgress(
+      '/api/rom?platform=' + encodeURIComponent(platform) + '&name=' + encodeURIComponent(f.name),
+      f,
+      p => {
+        $('upb').style.width = Math.round(p * 100) + '%';
+        if (p >= 1 && isZip) $('upphase').textContent = 'Extracting on server…';
+      });
+    if (!r.ok) { failed.push(f.name + (r.body.error ? ' — ' + r.body.error : '')); continue; }
+    if (r.body.extracted) {
+      extracted += r.body.extracted.length;
+      skipped.push(...(r.body.skipped || []));
+    } else games++;
   }
-  $('upStatus').innerHTML = '<span class="ok">Uploaded ' + files.length + ' file(s)</span>';
+  uploading = false;
+  const bits = [];
+  if (games) bits.push(games + ' file(s) uploaded');
+  if (extracted) bits.push(extracted + ' game(s) extracted from zips');
+  if (skipped.length) bits.push('<span class="warn">' + skipped.length + ' zip entries skipped (not ROMs): ' + esc(skipped.slice(0, 5).join(', ')) + (skipped.length > 5 ? '…' : '') + '</span>');
+  if (failed.length) bits.push('<span class="warn">failed: ' + esc(failed.join('; ')) + '</span>');
+  $('upStatus').innerHTML = '<span class="' + (failed.length ? 'warn' : 'ok') + '">' +
+    (bits.join(' · ') || 'nothing uploaded') + '</span>';
   await Promise.all([loadLibrary(), loadWishlist()]);
 }
 

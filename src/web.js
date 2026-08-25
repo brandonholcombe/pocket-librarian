@@ -1,5 +1,6 @@
 // Web side of pocket-librarian: Discord OAuth, ROM library storage,
 // sync-set API, and the single-page app (served from web/app.html).
+import { unzipSync } from 'fflate';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -38,7 +39,14 @@ if (!SESSION_SECRET) {
 export const FOLDERS = {
   GB: 'gb', GBC: 'gbc', GBA: 'gba', NES: 'nes', SNES: 'snes',
   Genesis: 'genesis', PCE: 'pce', 'PCE-CD': 'pcecd', 'Sega CD': 'segacd',
-  GG: 'gg', Lynx: 'lynx', NGPC: 'ngpc', Other: 'other',
+  GG: 'gg', Lynx: 'lynx', NGPC: 'ngpc', Arcade: 'arcade', Other: 'other',
+};
+
+// file extension -> platform, for zip extraction
+const EXT_PLATFORM = {
+  gb: 'GB', gbc: 'GBC', gba: 'GBA', nes: 'NES', fds: 'NES',
+  sfc: 'SNES', smc: 'SNES', md: 'Genesis', gen: 'Genesis',
+  pce: 'PCE', chd: 'PCE-CD', gg: 'GG', lnx: 'Lynx', ngc: 'NGPC', ngp: 'NGPC',
 };
 const PLATFORM_BY_FOLDER = Object.fromEntries(Object.entries(FOLDERS).map(([p, f]) => [f, p]));
 
@@ -50,6 +58,7 @@ const THUMB_SYS = {
   genesis: 'Sega - Mega Drive - Genesis', pce: 'NEC - PC Engine - TurboGrafx 16',
   pcecd: 'NEC - PC Engine CD - TurboGrafx-CD', segacd: 'Sega - Mega-CD - Sega CD',
   gg: 'Sega - Game Gear', lynx: 'Atari - Lynx', ngpc: 'SNK - Neo Geo Pocket Color',
+  arcade: 'FBNeo - Arcade Games',
 };
 
 // ---------- boxart ----------
@@ -340,19 +349,55 @@ export function startWeb({ state, GAMES = [], onLibraryChange }) {
         const tmp = dest + '.uploading';
         const hash = crypto.createHash('sha1');
         let size = 0;
+        const addRom = (plat, name, buf) => {
+          const f = FOLDERS[plat];
+          fs.mkdirSync(path.join(ROMS_DIR, f), { recursive: true });
+          fs.writeFileSync(path.join(ROMS_DIR, f, name), buf);
+          const id = `${f}/${name}`;
+          index.roms[id] = {
+            platform: plat, file: name, size: buf.length,
+            sha1: crypto.createHash('sha1').update(buf).digest('hex'),
+            title: cleanTitle(name), by: user.name, at: new Date().toISOString(),
+          };
+          onLibraryChange?.(index.roms[id]);
+          return id;
+        };
         const out = fs.createWriteStream(tmp);
         req.on('data', c => { hash.update(c); size += c.length; });
         req.pipe(out);
         out.on('finish', () => {
-          fs.renameSync(tmp, dest);
-          const id = romId(platform, file);
-          index.roms[id] = {
-            platform, file, size, sha1: hash.digest('hex'),
-            title: cleanTitle(file), by: user.name, at: new Date().toISOString(),
-          };
-          saveIndex();
-          onLibraryChange?.(index.roms[id]);
-          json(res, 200, { id, ...index.roms[id] });
+          try {
+            // Zips are extracted and shelved by inner extension — except for
+            // Arcade, where the zip itself is the romset format.
+            if (/\.zip$/i.test(file) && platform !== 'Arcade') {
+              const entries = unzipSync(fs.readFileSync(tmp));
+              fs.rmSync(tmp, { force: true });
+              const added = [], skipped = [];
+              for (const [entry, data] of Object.entries(entries)) {
+                const base = safeName(entry.split('/').pop());
+                if (!base || !data.length || entry.includes('__MACOSX')) continue;
+                const plat = EXT_PLATFORM[base.split('.').pop().toLowerCase()];
+                if (!plat) { skipped.push(base); continue; }
+                const id = addRom(plat, base, Buffer.from(data));
+                added.push({ id, title: index.roms[id].title, platform: plat });
+              }
+              saveIndex();
+              json(res, 200, { extracted: added, skipped });
+              return;
+            }
+            fs.renameSync(tmp, dest);
+            const id = romId(platform, file);
+            index.roms[id] = {
+              platform, file, size, sha1: hash.digest('hex'),
+              title: cleanTitle(file), by: user.name, at: new Date().toISOString(),
+            };
+            saveIndex();
+            onLibraryChange?.(index.roms[id]);
+            json(res, 200, { id, ...index.roms[id] });
+          } catch (e) {
+            fs.rmSync(tmp, { force: true });
+            json(res, 400, { error: `couldn't process upload: ${e.message}` });
+          }
         });
         out.on('error', e => { fs.rmSync(tmp, { force: true }); json(res, 500, { error: e.message }); });
         return;
