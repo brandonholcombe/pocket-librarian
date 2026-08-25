@@ -109,6 +109,7 @@
       <option value="genre">Group: Genre</option>
       <option value="">Group: None (A–Z)</option>
     </select>
+    <button class="ghost" id="syncAllBtn" hidden></button>
   </div>
   <div class="drop" id="drop">Drop ROM files or zips here (or click) — zips are extracted automatically;
     pick <b>Arcade</b> to keep a zip intact as an arcade romset
@@ -284,7 +285,7 @@ const seriesOf = t => {
   return SERIES.find(([, re]) => re.test(l))?.[0];
 };
 
-function groupedGrid(items, keyFn, cardFn, small) {
+function groupedGrid(items, keyFn, cardFn, small, headerExtra) {
   const groups = new Map();
   for (const it of items) {
     const k = keyFn(it);
@@ -295,7 +296,8 @@ function groupedGrid(items, keyFn, cardFn, small) {
     (a === 'Other' || a === 'Unknown') - (b === 'Other' || b === 'Unknown') || a.localeCompare(b));
   return names.map(n =>
     '<h2 style="font-size:.95rem;margin:1.1rem 0 .5rem;color:var(--accent2)">' + esc(n) +
-    ' <span class="meta">' + groups.get(n).length + '</span></h2>' +
+    ' <span class="meta">' + groups.get(n).length + '</span>' +
+    (headerExtra ? headerExtra(n, groups.get(n)) : '') + '</h2>' +
     '<div class="grid' + (small ? ' small' : '') + '">' + groups.get(n).map(cardFn).join('') + '</div>'
   ).join('');
 }
@@ -318,16 +320,40 @@ function renderRoms() {
     '<div class="m"><span class="chip">' + esc(r.platform) + '</span>' +
     (r.year ? esc(r.year) : '') + '</div></div></div>';
   const empty = '<div class="muted">nothing here yet — upload some ROMs above</div>';
+  lastShown = hits;
+  lastGroups = new Map();
+  const allShownIn = hits.length && hits.every(r => syncSet.has(r.id));
+  $('syncAllBtn').textContent = allShownIn
+    ? '− remove all shown from sync' : '＋ sync all shown (' + hits.length + ')';
+  $('syncAllBtn').hidden = !hits.length;
   if (!hits.length) { $('romGrid').innerHTML = empty; return; }
   const keyFns = {
     platform: r => r.platform,
     series: r => seriesOf(r.title) ?? 'Other',
     genre: r => r.genre ?? 'Unknown',
   };
+  const headerBtn = (name, items) => {
+    lastGroups.set(name, items);
+    const allIn = items.every(r => syncSet.has(r.id));
+    return ' <button class="ghost gbtn" style="font-size:.72rem;padding:.2rem .55rem;margin-left:.4rem" data-group="' +
+      esc(name) + '">' + (allIn ? '− unsync all' : '＋ sync all') + '</button>';
+  };
   $('romGrid').innerHTML = gb
-    ? groupedGrid(hits, keyFns[gb], card)
+    ? groupedGrid(hits, keyFns[gb], card, false, headerBtn)
     : '<div class="grid">' + hits.map(card).join('') + '</div>';
 }
+let lastShown = [], lastGroups = new Map();
+function bulkToggle(items) {
+  const allIn = items.every(r => syncSet.has(r.id));
+  for (const r of items) allIn ? syncSet.delete(r.id) : syncSet.add(r.id);
+  fetch('/api/syncset', { method: 'PUT', body: JSON.stringify([...syncSet]) });
+  renderRoms();
+}
+$('syncAllBtn').addEventListener('click', () => lastShown.length && bulkToggle(lastShown));
+$('romGrid').addEventListener('click', e => {
+  const g = e.target.dataset?.group;
+  if (g !== undefined) { bulkToggle(lastGroups.get(g) ?? []); e.stopPropagation(); }
+});
 for (const id of ['q', 'platFilter', 'setFilter', 'groupBy'])
   $(id).addEventListener('input', renderRoms);
 $('romGrid').addEventListener('click', e => {
