@@ -2,6 +2,7 @@
 // sync-set API, and the single-page app (served from web/app.html).
 import { unzipSync } from 'fflate';
 import crypto from 'node:crypto';
+import { listCores, ensureCore, getInventory, coreFilePath, getFirmware } from './provision.js';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import http from 'node:http';
@@ -440,6 +441,72 @@ export function startWeb({ state, GAMES = [], onLibraryChange }) {
         json(res, 200, { ids: index.syncSets[user.id] ?? [] });
         return;
       }
+      // ----- provisioning: cores + firmware -----
+      if (p === '/api/cores') {
+        if (!authed()) return;
+        json(res, 200, { cores: await listCores(), selected: index.coreSets?.[user.id] ?? [] });
+        return;
+      }
+      if (p === '/api/coreset' && req.method === 'PUT') {
+        if (!authed()) return;
+        const ids = JSON.parse(await readBody(req));
+        if (!Array.isArray(ids)) { json(res, 400, { error: 'array expected' }); return; }
+        const inv = await getInventory();
+        index.coreSets = index.coreSets ?? {};
+        index.coreSets[user.id] = ids.filter(id => inv.has(id));
+        saveIndex();
+        json(res, 200, { ids: index.coreSets[user.id] });
+        return;
+      }
+      if (p === '/api/provision/manifest') {
+        if (!authed()) return;
+        const out = { cores: [], failures: [] };
+        try {
+          const fw = await getFirmware();
+          out.firmware = { version: fw.version, file: fw.file, size: fw.size, url: '/api/firmware/bin' };
+        } catch (e) { out.failures.push(`firmware: ${e.message}`); }
+        for (const id of index.coreSets?.[user.id] ?? []) {
+          try {
+            const { version, files } = await ensureCore(id);
+            out.cores.push({
+              id, version,
+              files: files.map(f => ({
+                path: f.path, size: f.size,
+                url: `/api/corefile/${encodeURIComponent(id)}/${f.path.split('/').map(encodeURIComponent).join('/')}`,
+              })),
+            });
+          } catch (e) { out.failures.push(`${id}: ${e.message}`); }
+        }
+        json(res, 200, out);
+        return;
+      }
+      const coreFileReq = p.match(/^\/api\/corefile\/([^/]+)\/(.+)$/);
+      if (coreFileReq) {
+        if (!authed()) return;
+        const id = decodeURIComponent(coreFileReq[1]);
+        const rel = coreFileReq[2].split('/').map(decodeURIComponent).join('/');
+        const core = (await getInventory()).get(id);
+        const full = core && coreFilePath(id, core.version, rel);
+        if (!full) { json(res, 404, { error: 'not found' }); return; }
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'content-length': fs.statSync(full).size,
+        });
+        fs.createReadStream(full).pipe(res);
+        return;
+      }
+      if (p === '/api/firmware/bin') {
+        if (!authed()) return;
+        const fw = await getFirmware();
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'content-length': fw.size,
+          'content-disposition': `attachment; filename="${fw.file}"`,
+        });
+        fs.createReadStream(fw.path).pipe(res);
+        return;
+      }
+
       if (p === '/api/sync/manifest') {
         if (!authed()) return;
         const items = (index.syncSets[user.id] ?? [])

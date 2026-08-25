@@ -90,6 +90,7 @@
 <nav id="tabs" hidden>
   <button data-tab="library" class="on">Library</button>
   <button data-tab="wishlist">Wishlist</button>
+  <button data-tab="cores">Cores</button>
   <button data-tab="sync">Sync to SD</button>
 </nav>
 
@@ -120,9 +121,21 @@
   <div class="grid small" id="ownedGrid"></div>
 </section>
 
+<section id="tab-cores" hidden>
+  <p class="muted">Pick the cores your card should have — they're downloaded and installed onto the
+  card by <b>Sync to SD</b>, along with the latest Analogue OS firmware. Handhelds and consoles
+  need one core per system; arcade games each have their own core.</p>
+  <div class="toolbar">
+    <input type="search" id="coreQ" placeholder="Search cores…">
+    <span class="muted" id="coreCount"></span>
+  </div>
+  <ul class="plain" id="coreList"></ul>
+</section>
+
 <section id="tab-sync" hidden>
   <p class="muted">Pick your SD card (its root folder). Works in Chrome and Edge on Mac & Windows.
-  The games in your sync set (Library tab) are what gets synced.</p>
+  One pass installs the latest firmware, your selected cores (Cores tab), and the games in your
+  sync set (Library tab).</p>
   <button class="primary" id="pickCard">Choose SD card…</button>
   <div id="syncReport"></div>
   <button class="primary" id="goSync" hidden>Download missing to card</button>
@@ -169,9 +182,53 @@ async function boot() {
 function showTab(name) {
   for (const b of document.querySelectorAll('#tabs button'))
     b.classList.toggle('on', b.dataset.tab === name);
-  for (const s of ['library', 'wishlist', 'sync'])
+  for (const s of ['library', 'wishlist', 'cores', 'sync'])
     $('tab-' + s).hidden = s !== name;
+  if (name === 'cores' && !cores.length) loadCores();
 }
+
+// ---- cores ----
+let cores = [], coreSet = new Set();
+async function loadCores() {
+  $('coreList').innerHTML = '<div class="muted">loading core inventory…</div>';
+  const d = await (await fetch('/api/cores')).json();
+  const catRank = { Handheld: 0, Console: 1, Arcade: 2 };
+  cores = d.cores.sort((a, b) =>
+    (catRank[a.category] ?? 3) - (catRank[b.category] ?? 3) ||
+    a.name.localeCompare(b.name) || a.author.localeCompare(b.author));
+  coreSet = new Set(d.selected);
+  renderCores();
+}
+function renderCores() {
+  const q = $('coreQ').value.toLowerCase();
+  const hits = cores.filter(c => !q ||
+    (c.name + ' ' + c.author + ' ' + c.id + ' ' + (c.manufacturer || '')).toLowerCase().includes(q));
+  $('coreCount').textContent = coreSet.size + ' selected';
+  let lastCat = '';
+  $('coreList').innerHTML = hits.map(c => {
+    const hdr = c.category !== lastCat
+      ? '<h2 style="font-size:.95rem;margin:1rem 0 .4rem;color:var(--accent2)">' + esc(lastCat = c.category) + '</h2>' : '';
+    return hdr + '<li><input type="checkbox" data-core="' + esc(c.id) + '"' +
+      (coreSet.has(c.id) ? ' checked' : '') + (c.requiresLicense ? ' disabled' : '') + '>' +
+      '<span class="t">' + esc(c.name) +
+      ' <span class="meta">' + esc(c.author) + ' · v' + esc(c.version) +
+      (c.requiresLicense ? ' · needs license — install manually' : '') + '</span></span>' +
+      (c.year ? '<span class="meta">' + esc(c.manufacturer || '') + ' ' + esc(c.year) + '</span>' : '') +
+      '</li>';
+  }).join('') || '<div class="muted">no matches</div>';
+}
+$('coreQ').addEventListener('input', renderCores);
+let coreSaveTimer;
+$('coreList').addEventListener('change', e => {
+  const id = e.target.dataset.core;
+  if (!id) return;
+  e.target.checked ? coreSet.add(id) : coreSet.delete(id);
+  $('coreCount').textContent = coreSet.size + ' selected';
+  clearTimeout(coreSaveTimer);
+  coreSaveTimer = setTimeout(() => fetch('/api/coreset', {
+    method: 'PUT', body: JSON.stringify([...coreSet]),
+  }), 400);
+});
 $('tabs').addEventListener('click', e => e.target.dataset.tab && showTab(e.target.dataset.tab));
 
 // ---- library grid ----
@@ -336,55 +393,107 @@ $('pickCard').addEventListener('click', async () => {
   if (!cardHandle) return;
   await scanCard();
 });
-async function scanCard() {
-  $('syncReport').textContent = 'Scanning card…';
-  const manifest = (await (await fetch('/api/sync/manifest')).json()).items;
-  const assets = await cardHandle.getDirectoryHandle('Assets', { create: true });
-  missing = [];
-  let present = 0;
-  for (const item of manifest) {
-    let found = false;
-    try {
-      const dir = await (await assets.getDirectoryHandle(item.folder)).getDirectoryHandle('common');
-      const f = await (await dir.getFileHandle(item.file)).getFile();
-      found = f.size === item.size;
-    } catch { /* not there */ }
-    found ? present++ : missing.push(item);
-  }
-  $('syncReport').innerHTML =
-    '<p>Sync set: <b>' + manifest.length + '</b> games · already on card: <b class="ok">' +
-    present + '</b> · missing: <b class="' + (missing.length ? 'warn' : 'ok') + '">' + missing.length + '</b></p>' +
-    (missing.length ? '<ul class="plain">' + missing.map(m =>
-      '<li><span class="t">' + esc(m.file) + '</span><span class="meta">' +
-      esc(m.folder) + ' · ' + fmtMB(m.size) + '</span></li>').join('') + '</ul>' : '');
-  $('goSync').hidden = missing.length === 0;
+async function dirByPath(root, segs, create) {
+  let d = root;
+  for (const s of segs) d = await d.getDirectoryHandle(s, { create });
+  return d;
 }
+async function cardFileSize(root, relPath) {
+  try {
+    const segs = relPath.split('/');
+    const dir = await dirByPath(root, segs.slice(0, -1), false);
+    return (await (await dir.getFileHandle(segs.at(-1))).getFile()).size;
+  } catch { return null; }
+}
+async function writeCardFile(root, relPath, res, size, onProg) {
+  const segs = relPath.split('/');
+  const dir = await dirByPath(root, segs.slice(0, -1), true);
+  const w = await (await dir.getFileHandle(segs.at(-1), { create: true })).createWritable();
+  const reader = res.body.getReader();
+  let got = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    await w.write(value);
+    got += value.length;
+    onProg?.(got / size);
+  }
+  await w.close();
+}
+
+let todo = null;
+async function scanCard() {
+  $('syncReport').textContent = 'Scanning card & preparing cores on the server (first time can take a minute)…';
+  $('goSync').hidden = true;
+  const [games, prov] = await Promise.all([
+    fetch('/api/sync/manifest').then(r => r.json()),
+    fetch('/api/provision/manifest').then(r => r.json()),
+  ]);
+  todo = { fw: null, staleFw: [], coreFiles: [], games: [], failures: prov.failures || [] };
+
+  // firmware: latest .bin at card root; older firmware bins get removed
+  if (prov.firmware) {
+    const have = await cardFileSize(cardHandle, prov.firmware.file);
+    if (have !== prov.firmware.size) todo.fw = prov.firmware;
+    for await (const [name, h] of cardHandle.entries()) {
+      if (h.kind === 'file' && /^pocket_firmware.*\.bin$/i.test(name) && name !== prov.firmware.file)
+        todo.staleFw.push(name);
+    }
+  }
+  // cores: every file the selected cores ship
+  let coreFilesTotal = 0;
+  for (const core of prov.cores) {
+    for (const f of core.files) {
+      coreFilesTotal++;
+      if (await cardFileSize(cardHandle, f.path) !== f.size)
+        todo.coreFiles.push({ ...f, core: core.id });
+    }
+  }
+  // games, as before
+  for (const item of games.items) {
+    const rel = 'Assets/' + item.folder + '/common/' + item.file;
+    if (await cardFileSize(cardHandle, rel) !== item.size)
+      todo.games.push({ ...item, rel });
+  }
+
+  const n = todo.coreFiles.length + todo.games.length + (todo.fw ? 1 : 0);
+  $('syncReport').innerHTML =
+    '<p>Firmware: ' + (prov.firmware
+      ? (todo.fw ? '<b class="warn">v' + esc(prov.firmware.version) + ' needs install</b>'
+                 : '<b class="ok">v' + esc(prov.firmware.version) + ' ✓</b>')
+      : '<span class="warn">unavailable</span>') +
+    (todo.staleFw.length ? ' <span class="muted">(+' + todo.staleFw.length + ' old firmware file(s) to remove)</span>' : '') +
+    '</p><p>Cores: <b>' + prov.cores.length + '</b> selected · files missing/outdated: <b class="' +
+    (todo.coreFiles.length ? 'warn' : 'ok') + '">' + todo.coreFiles.length + '</b> of ' + coreFilesTotal +
+    '</p><p>Games: <b>' + games.items.length + '</b> in sync set · missing: <b class="' +
+    (todo.games.length ? 'warn' : 'ok') + '">' + todo.games.length + '</b></p>' +
+    (todo.failures.length ? '<p class="warn">Server couldn\'t prepare: ' + esc(todo.failures.join('; ')) + '</p>' : '') +
+    (n === 0 ? '<p class="ok">Card is fully up to date ✓</p>' : '');
+  $('goSync').textContent = 'Write everything to card (' + n + ' file' + (n === 1 ? '' : 's') + ')';
+  $('goSync').hidden = n === 0;
+}
+
 $('goSync').addEventListener('click', async () => {
   $('goSync').disabled = true;
-  const assets = await cardHandle.getDirectoryHandle('Assets', { create: true });
-  let done = 0;
-  for (const item of missing) {
-    $('syncProg').innerHTML = 'Downloading <b>' + esc(item.file) + '</b> (' +
-      (done + 1) + '/' + missing.length + ')…<div class="bar"><div id="pb"></div></div>';
-    const res = await fetch('/api/rom/' + item.folder + '/' + encodeURIComponent(item.file));
-    if (!res.ok) { $('syncProg').innerHTML = '<span class="warn">Failed on ' + esc(item.file) + '</span>'; break; }
-    const dir = await (await assets.getDirectoryHandle(item.folder, { create: true }))
-      .getDirectoryHandle('common', { create: true });
-    const fh = await dir.getFileHandle(item.file, { create: true });
-    const w = await fh.createWritable();
-    const reader = res.body.getReader();
-    let got = 0;
-    for (;;) {
-      const { value, done: end } = await reader.read();
-      if (end) break;
-      await w.write(value);
-      got += value.length;
-      $('pb').style.width = Math.round(100 * got / item.size) + '%';
-    }
-    await w.close();
+  let done = 0, failed = 0;
+  const total = todo.coreFiles.length + todo.games.length + (todo.fw ? 1 : 0);
+  const step = async (label, rel, url, size) => {
+    $('syncProg').innerHTML = '(' + (done + 1) + '/' + total + ') ' + label + ' <b>' +
+      esc(rel.split('/').at(-1)) + '</b><div class="bar"><div id="pb"></div></div>';
+    const res = await fetch(url);
+    if (!res.ok) { failed++; return; }
+    await writeCardFile(cardHandle, rel, res, size,
+      p => { $('pb').style.width = Math.round(p * 100) + '%'; });
     done++;
-  }
-  $('syncProg').innerHTML += '<p class="ok">Done — ' + done + ' game(s) written. Eject the card and play.</p>';
+  };
+  for (const f of todo.coreFiles) await step('core file', f.path, f.url, f.size);
+  if (todo.fw) await step('firmware', todo.fw.file, todo.fw.url, todo.fw.size);
+  for (const name of todo.staleFw)
+    await cardHandle.removeEntry(name).catch(() => {});
+  for (const g of todo.games) await step('game', g.rel, '/api/rom/' + g.folder + '/' + encodeURIComponent(g.file), g.size);
+  $('syncProg').innerHTML = failed
+    ? '<p class="warn">' + done + ' written, ' + failed + ' failed — rescan and retry.</p>'
+    : '<p class="ok">Done — ' + done + ' file(s) written. Eject the card; the Pocket installs new firmware on boot.</p>';
   $('goSync').disabled = false;
   await scanCard();
 });
