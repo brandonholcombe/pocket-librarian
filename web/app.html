@@ -205,7 +205,8 @@ async function loadCores() {
   const catRank = { Handheld: 0, Console: 1, Arcade: 2 };
   cores = d.cores.sort((a, b) =>
     (catRank[a.category] ?? 3) - (catRank[b.category] ?? 3) ||
-    a.name.localeCompare(b.name) || a.author.localeCompare(b.author));
+    String(a.name || a.id).localeCompare(String(b.name || b.id)) ||
+    String(a.author || '').localeCompare(String(b.author || '')));
   coreSet = new Set(d.selected);
   renderCores();
 }

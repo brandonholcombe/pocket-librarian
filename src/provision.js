@@ -41,12 +41,12 @@ export async function listCores() {
   const byId = await getInventory();
   return [...byId.values()].map(c => ({
     id: c.identifier,
-    name: c.platform?.name ?? c.platform_id,
+    name: c.platform?.name ?? c.platform_id ?? c.identifier,
     category: c.platform?.category ?? 'Other',
     manufacturer: c.platform?.manufacturer,
     year: c.platform?.year,
-    author: c.repository?.owner,
-    version: c.version,
+    author: c.repository?.owner ?? c.identifier.split('.')[0],
+    version: c.version ?? '',
     requiresLicense: !!c.requires_license,
   }));
 }
