@@ -335,7 +335,8 @@ async function uploadFiles(files) {
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     const ext = f.name.split('.').pop().toLowerCase();
-    const platform = $('platformSel').value || EXT[ext] || 'Other';
+    const platform = $('platformSel').value ||
+      (f.name.toLowerCase() === 'gba_bios.bin' ? 'GBA' : EXT[ext]) || 'Other';
     const isZip = ext === 'zip' && platform !== 'Arcade';
     $('upStatus').innerHTML =
       '<b>' + esc(f.name) + '</b> <span class="muted">(' +

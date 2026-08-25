@@ -509,8 +509,11 @@ export function startWeb({ state, GAMES = [], onLibraryChange }) {
 
       if (p === '/api/sync/manifest') {
         if (!authed()) return;
-        const items = (index.syncSets[user.id] ?? [])
-          .filter(id => index.roms[id])
+        // BIOS/support files always sync, regardless of anyone's sync set
+        const chosen = (index.syncSets[user.id] ?? []).filter(id => index.roms[id]);
+        const bios = Object.keys(index.roms)
+          .filter(id => /bios/i.test(index.roms[id].file) && !chosen.includes(id));
+        const items = [...chosen, ...bios]
           .map(id => {
             const r = index.roms[id];
             return { id, folder: FOLDERS[r.platform] ?? 'other', file: r.file, size: r.size, sha1: r.sha1 };
