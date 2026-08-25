@@ -509,7 +509,7 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
         const out = { cores: [], failures: [] };
         try {
           const fw = await getFirmware();
-          out.firmware = { version: fw.version, file: fw.file, size: fw.size, url: '/api/firmware/bin' };
+          out.firmware = { version: fw.version, file: fw.file, size: fw.size, sha1: fw.sha1, url: '/api/firmware/bin' };
         } catch (e) { out.failures.push(`firmware: ${e.message}`); }
         const autoCores = await coresForFolders(autoFolders());
         out.auto = autoCores;

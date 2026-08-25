@@ -150,6 +150,7 @@
   <button class="primary" id="pickCard">Choose SD card…</button>
   <div id="syncReport"></div>
   <button class="primary" id="goSync" hidden>Download missing to card</button>
+  <button class="ghost" id="deepVerify" hidden>Deep verify card (hash check)</button>
   <div id="syncProg"></div>
 </section>
 
@@ -615,7 +616,45 @@ async function scanCard() {
     (n === 0 ? '<p class="ok">Card is fully up to date ✓</p>' : '');
   $('goSync').textContent = 'Write everything to card (' + n + ' file' + (n === 1 ? '' : 's') + ')';
   $('goSync').hidden = n === 0;
+  $('deepVerify').hidden = false;
+  lastManifests = { games: games.items, firmware: prov.firmware };
 }
+
+// hash files already on the card against the server's known-good SHA1s —
+// catches torn writes and silent corruption (classic fake-card symptom)
+let lastManifests = null;
+async function sha1OfCardFile(rel) {
+  const segs = rel.split('/');
+  const dir = await dirByPath(cardHandle, segs.slice(0, -1), false);
+  const f = await (await dir.getFileHandle(segs.at(-1))).getFile();
+  const digest = await crypto.subtle.digest('SHA-1', await f.arrayBuffer());
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+$('deepVerify').addEventListener('click', async () => {
+  $('deepVerify').disabled = true;
+  const checks = [];
+  if (lastManifests?.firmware?.sha1)
+    checks.push({ rel: lastManifests.firmware.file, sha1: lastManifests.firmware.sha1, label: 'firmware' });
+  for (const g of lastManifests?.games ?? [])
+    if (g.sha1) checks.push({ rel: 'Assets/' + g.folder + '/common/' + g.file, sha1: g.sha1, label: 'game' });
+  const bad = [], absent = [];
+  let ok = 0;
+  for (let i = 0; i < checks.length; i++) {
+    const c = checks[i];
+    $('syncProg').innerHTML = 'Verifying (' + (i + 1) + '/' + checks.length + ') <b>' + esc(c.rel.split('/').at(-1)) + '</b>…';
+    try {
+      (await sha1OfCardFile(c.rel)) === c.sha1 ? ok++ : bad.push(c.rel);
+    } catch { absent.push(c.rel); }
+  }
+  $('syncProg').innerHTML =
+    '<p>Deep verify: <b class="ok">' + ok + ' intact</b>' +
+    (absent.length ? ' · ' + absent.length + ' not on card' : '') +
+    (bad.length ? ' · <b class="warn">' + bad.length + ' CORRUPT</b></p><ul class="plain">' +
+      bad.map(f => '<li class="warn">' + esc(f) + ' — content doesn\'t match, rewrite it (or distrust this card)</li>').join('') + '</ul>'
+      : '</p>') +
+    (bad.length ? '<p class="muted">Corrupt files that were fully written once point at the card silently mangling data — typical of counterfeit cards. Reformat and re-test, or replace the card.</p>' : '');
+  $('deepVerify').disabled = false;
+});
 
 $('goSync').addEventListener('click', async () => {
   $('goSync').disabled = true;
