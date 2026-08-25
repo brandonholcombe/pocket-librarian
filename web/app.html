@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pocket Library</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, system-ui, sans-serif;
+         background: #131217; color: #e8e6f0; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 1.2rem; }
+  header { display: flex; align-items: center; gap: 1rem; }
+  h1 { font-size: 1.3rem; flex: 1; margin: .4rem 0; }
+  nav { display: flex; gap: .4rem; margin: 1rem 0; }
+  nav button { background: #1e1c26; color: #e8e6f0; border: 0; padding: .5rem .9rem;
+               border-radius: 8px; cursor: pointer; font-size: .9rem; }
+  nav button.on { background: #8c52ff; }
+  button.primary { background: #8c52ff; color: #fff; border: 0; padding: .55rem 1rem;
+                   border-radius: 8px; cursor: pointer; }
+  button:disabled { opacity: .4; cursor: default; }
+  input[type=search], select { background: #1e1c26; border: 1px solid #333;
+    color: #e8e6f0; padding: .5rem .7rem; border-radius: 8px; font-size: .95rem; }
+  input[type=search] { width: 100%; margin: .4rem 0; }
+  ul { list-style: none; padding: 0; margin: .6rem 0; }
+  li { padding: .5rem .7rem; border-radius: 8px; background: #1e1c26;
+       margin-bottom: .3rem; display: flex; gap: .6rem; align-items: center; }
+  li .t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .meta { color: #8b879c; font-size: .78rem; white-space: nowrap; }
+  .muted { color: #8b879c; }
+  .drop { border: 2px dashed #444; border-radius: 10px; padding: 1.2rem;
+          text-align: center; color: #8b879c; margin: .8rem 0; }
+  .drop.hot { border-color: #8c52ff; color: #b9aaff; }
+  .bar { height: 6px; background: #1e1c26; border-radius: 3px; overflow: hidden; margin: .3rem 0; }
+  .bar > div { height: 100%; background: #8c52ff; width: 0%; }
+  .ok { color: #7ee2a8; } .warn { color: #ffcf7d; }
+  li.owned { opacity: .65; } li.owned .t { text-decoration: line-through; }
+</style></head><body><div class="wrap">
+<header>
+  <h1>🎮 Pocket Library</h1>
+  <span id="who" class="muted"></span>
+  <button id="loginBtn" class="primary" hidden onclick="location='/auth/login'">Log in with Discord</button>
+  <button id="logoutBtn" hidden onclick="location='/auth/logout'">Log out</button>
+</header>
+<nav id="tabs" hidden>
+  <button data-tab="library" class="on">Library</button>
+  <button data-tab="wishlist">Wishlist</button>
+  <button data-tab="sync">Sync to SD</button>
+</nav>
+
+<section id="tab-library" hidden>
+  <div class="drop" id="drop">Drop ROM files here (or click) to upload —
+    platform is guessed from the extension
+    <select id="platformSel"><option value="">auto-detect</option></select>
+    <input type="file" id="filePick" multiple hidden>
+  </div>
+  <div id="upStatus"></div>
+  <input type="search" id="q" placeholder="Search the library…">
+  <div class="muted" id="libCount"></div>
+  <ul id="romList"></ul>
+</section>
+
+<section id="tab-wishlist" hidden>
+  <h2 style="font-size:1rem">🎯 Requested</h2><ul id="requested"></ul>
+  <h2 style="font-size:1rem">☑ In library</h2><ul id="ownedList"></ul>
+</section>
+
+<section id="tab-sync" hidden>
+  <p class="muted">Pick your SD card (its root folder). Works in Chrome and Edge
+  on Mac & Windows. The checked games in <b>Library</b> are what gets synced.</p>
+  <button class="primary" id="pickCard">Choose SD card…</button>
+  <div id="syncReport"></div>
+  <button class="primary" id="goSync" hidden>Download missing to card</button>
+  <div id="syncProg"></div>
+</section>
+
+<footer class="muted" style="margin-top:2rem;font-size:.75rem">
+  pocket-librarian · requests via /request in Discord</footer>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtMB = n => n > 1e6 ? (n/1e6).toFixed(1) + ' MB' : Math.round(n/1e3) + ' KB';
+const EXT = { gb:'GB', gbc:'GBC', gba:'GBA', nes:'NES', sfc:'SNES', smc:'SNES',
+  md:'Genesis', gen:'Genesis', pce:'PCE', chd:'PCE-CD', gg:'GG', lnx:'Lynx',
+  ngc:'NGPC', ngp:'NGPC' };
+const FOLDERS = { GB:'gb', GBC:'gbc', GBA:'gba', NES:'nes', SNES:'snes',
+  Genesis:'genesis', PCE:'pce', 'PCE-CD':'pcecd', 'Sega CD':'segacd',
+  GG:'gg', Lynx:'lynx', NGPC:'ngpc', Other:'other' };
+
+let me = null, roms = [], syncSet = new Set();
+
+async function boot() {
+  me = (await (await fetch('/api/me')).json()).user;
+  $('who').textContent = me ? me.name : '';
+  $('loginBtn').hidden = !!me;
+  $('logoutBtn').hidden = !me;
+  $('tabs').hidden = !me;
+  if (!me) { showTab('wishlist'); $('tabs').hidden = true; loadWishlist(); return; }
+  Object.keys(FOLDERS).forEach(p => {
+    const o = document.createElement('option'); o.value = o.textContent = p;
+    $('platformSel').appendChild(o);
+  });
+  showTab('library');
+  await Promise.all([loadLibrary(), loadWishlist()]);
+}
+
+function showTab(name) {
+  for (const b of document.querySelectorAll('#tabs button'))
+    b.classList.toggle('on', b.dataset.tab === name);
+  for (const s of ['library', 'wishlist', 'sync'])
+    $('tab-' + s).hidden = s !== name;
+}
+$('tabs').addEventListener('click', e => e.target.dataset.tab && showTab(e.target.dataset.tab));
+
+// ---- library ----
+async function loadLibrary() {
+  const [r, s] = await Promise.all([
+    fetch('/api/roms').then(r => r.json()),
+    fetch('/api/syncset').then(r => r.json()),
+  ]);
+  roms = r.roms.sort((a, b) => a.title.localeCompare(b.title));
+  syncSet = new Set(s.ids);
+  renderRoms();
+}
+function renderRoms() {
+  const q = $('q').value.toLowerCase();
+  const hits = roms.filter(r => !q || r.title.toLowerCase().includes(q) || r.file.toLowerCase().includes(q));
+  $('libCount').textContent = hits.length + ' of ' + roms.length + ' games — checked ones are in your sync set (' + syncSet.size + ')';
+  $('romList').innerHTML = hits.map(r =>
+    '<li><input type="checkbox" data-id="' + esc(r.id) + '"' + (syncSet.has(r.id) ? ' checked' : '') + '>' +
+    '<span class="t">' + esc(r.title) + '</span>' +
+    '<span class="meta">' + esc(r.platform) + ' · ' + fmtMB(r.size) + '</span></li>'
+  ).join('') || '<div class="muted">nothing here yet — upload some ROMs above</div>';
+}
+$('q').addEventListener('input', renderRoms);
+let saveTimer;
+$('romList').addEventListener('change', e => {
+  const id = e.target.dataset.id;
+  if (!id) return;
+  e.target.checked ? syncSet.add(id) : syncSet.delete(id);
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => fetch('/api/syncset', {
+    method: 'PUT', body: JSON.stringify([...syncSet]),
+  }), 400);
+  renderRoms();
+});
+
+// ---- upload ----
+const drop = $('drop');
+drop.addEventListener('click', e => { if (e.target === drop) $('filePick').click(); });
+$('filePick').addEventListener('change', () => uploadFiles([...$('filePick').files]));
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('hot'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('hot'));
+drop.addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('hot');
+  uploadFiles([...e.dataTransfer.files]);
+});
+async function uploadFiles(files) {
+  for (const f of files) {
+    const ext = f.name.split('.').pop().toLowerCase();
+    const platform = $('platformSel').value || EXT[ext] || 'Other';
+    $('upStatus').innerHTML = 'Uploading <b>' + esc(f.name) + '</b> (' + esc(platform) + ')…';
+    const res = await fetch('/api/rom?platform=' + encodeURIComponent(platform) +
+      '&name=' + encodeURIComponent(f.name), { method: 'PUT', body: f });
+    if (!res.ok) { $('upStatus').innerHTML = '<span class="warn">Failed: ' + esc(f.name) + '</span>'; return; }
+  }
+  $('upStatus').innerHTML = '<span class="ok">Uploaded ' + files.length + ' file(s)</span>';
+  await loadLibrary();
+}
+
+// ---- wishlist ----
+async function loadWishlist() {
+  const s = await (await fetch('/api/state')).json();
+  const render = (elId, status, cls) => {
+    const items = s.entries.filter(e => e.status === status);
+    $(elId).innerHTML = items.map(e =>
+      '<li class="' + cls + '"><span class="t">' + esc(e.title) +
+      ' <span class="meta">(' + esc(e.platform) + ')</span></span>' +
+      '<span class="meta">' + esc(e.requestedBy || '') + '</span></li>'
+    ).join('') || '<div class="muted">none</div>';
+  };
+  render('requested', 'requested', '');
+  render('ownedList', 'owned', 'owned');
+}
+
+// ---- sync to SD ----
+let cardHandle = null, missing = [];
+$('pickCard').addEventListener('click', async () => {
+  if (!window.showDirectoryPicker) {
+    $('syncReport').innerHTML = '<p class="warn">This browser can\'t write to folders — use Chrome or Edge.</p>';
+    return;
+  }
+  cardHandle = await showDirectoryPicker({ mode: 'readwrite' }).catch(() => null);
+  if (!cardHandle) return;
+  await scanCard();
+});
+async function scanCard() {
+  $('syncReport').textContent = 'Scanning card…';
+  const manifest = (await (await fetch('/api/sync/manifest')).json()).items;
+  const assets = await cardHandle.getDirectoryHandle('Assets', { create: true });
+  missing = [];
+  let present = 0;
+  for (const item of manifest) {
+    let found = false;
+    try {
+      const dir = await (await assets.getDirectoryHandle(item.folder)).getDirectoryHandle('common');
+      const fh = await dir.getFileHandle(item.file);
+      const f = await fh.getFile();
+      found = f.size === item.size;
+    } catch { /* not there */ }
+    found ? present++ : missing.push(item);
+  }
+  $('syncReport').innerHTML =
+    '<p>Sync set: <b>' + manifest.length + '</b> games · already on card: <b class="ok">' +
+    present + '</b> · missing: <b class="' + (missing.length ? 'warn' : 'ok') + '">' + missing.length + '</b></p>' +
+    (missing.length ? '<ul>' + missing.map(m =>
+      '<li><span class="t">' + esc(m.file) + '</span><span class="meta">' +
+      esc(m.folder) + ' · ' + fmtMB(m.size) + '</span></li>').join('') + '</ul>' : '');
+  $('goSync').hidden = missing.length === 0;
+}
+$('goSync').addEventListener('click', async () => {
+  $('goSync').disabled = true;
+  const assets = await cardHandle.getDirectoryHandle('Assets', { create: true });
+  let done = 0;
+  for (const item of missing) {
+    $('syncProg').innerHTML = 'Downloading <b>' + esc(item.file) + '</b> (' +
+      (done + 1) + '/' + missing.length + ')…<div class="bar"><div id="pb"></div></div>';
+    const res = await fetch('/api/rom/' + item.folder + '/' + encodeURIComponent(item.file));
+    if (!res.ok) { $('syncProg').innerHTML = '<span class="warn">Failed on ' + esc(item.file) + '</span>'; break; }
+    const dir = await (await assets.getDirectoryHandle(item.folder, { create: true }))
+      .getDirectoryHandle('common', { create: true });
+    const fh = await dir.getFileHandle(item.file, { create: true });
+    const w = await fh.createWritable();
+    const reader = res.body.getReader();
+    let got = 0;
+    for (;;) {
+      const { value, done: end } = await reader.read();
+      if (end) break;
+      await w.write(value);
+      got += value.length;
+      $('pb').style.width = Math.round(100 * got / item.size) + '%';
+    }
+    await w.close();
+    done++;
+  }
+  $('syncProg').innerHTML += '<p class="ok">Done — ' + done + ' game(s) written. Eject the card and play.</p>';
+  $('goSync').disabled = false;
+  await scanCard();
+});
+
+boot();
+</script></body></html>

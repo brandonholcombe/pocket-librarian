@@ -15,6 +15,18 @@ spec:
     requests:
       storage: 1Gi
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pocket-librarian-roms
+  namespace: pocket-librarian
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: linode-block-storage-retain
+  resources:
+    requests:
+      storage: 80Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -42,11 +54,15 @@ spec:
           env:
             - name: PUBLIC_URL
               value: https://pocket.kodloki.io
+            - name: ROMS_DIR
+              value: /roms
           ports:
             - containerPort: 8080
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: roms
+              mountPath: /roms
           resources:
             requests:
               cpu: 10m
@@ -62,6 +78,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: pocket-librarian-data
+        - name: roms
+          persistentVolumeClaim:
+            claimName: pocket-librarian-roms
 ---
 apiVersion: v1
 kind: Service
@@ -82,6 +101,10 @@ metadata:
   namespace: pocket-librarian
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: 2g
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
 spec:
   ingressClassName: nginx
   tls:

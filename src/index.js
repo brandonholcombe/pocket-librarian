@@ -1,9 +1,9 @@
 import {
   Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, MessageFlags,
 } from 'discord.js';
-import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { startWeb } from './web.js';
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const APP_ID = process.env.DISCORD_APP_ID;
@@ -231,61 +231,6 @@ async function handleCommand(interaction) {
   await updatePinnedMessage(interaction.client);
 }
 
-// ---------- web ----------
-const PAGE = /* html */ `<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pocket Library</title>
-<style>
-  :root { color-scheme: dark; }
-  body { margin: 0; font-family: -apple-system, system-ui, sans-serif;
-         background: #131217; color: #e8e6f0; }
-  .wrap { max-width: 640px; margin: 0 auto; padding: 1.2rem; }
-  h1 { font-size: 1.4rem; } h2 { font-size: 1.05rem; margin: 1.4rem 0 .4rem;
-       color: #b9aaff; }
-  ul { list-style: none; padding: 0; margin: 0; }
-  li { padding: .55rem .7rem; border-radius: 8px; background: #1e1c26;
-       margin-bottom: .35rem; display: flex; justify-content: space-between;
-       gap: .6rem; align-items: baseline; }
-  li .meta { color: #8b879c; font-size: .8rem; white-space: nowrap; }
-  li.owned { opacity: .65; } li.owned .title { text-decoration: line-through; }
-  .empty { color: #8b879c; padding: .4rem .7rem; }
-  footer { margin-top: 2rem; color: #8b879c; font-size: .75rem; }
-</style></head><body><div class="wrap">
-<h1>🎮 Pocket Library</h1>
-<h2>🎯 Requested</h2><ul id="requested"></ul>
-<h2>☑ In library</h2><ul id="owned"></ul>
-<footer>Updates live from Discord · refreshes every 30s</footer>
-</div><script>
-async function refresh() {
-  const s = await (await fetch('/api/state')).json();
-  for (const status of ['requested', 'owned']) {
-    const ul = document.getElementById(status);
-    const items = s.entries.filter(e => e.status === status);
-    ul.innerHTML = items.length ? items.map(e =>
-      '<li class="' + status + '"><span class="title">' + esc(e.title) +
-      ' <span class="meta">(' + esc(e.platform) + ')</span></span>' +
-      '<span class="meta">' + esc(e.requestedBy || '') + '</span></li>'
-    ).join('') : '<div class="empty">none yet</div>';
-  }
-}
-const esc = s => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-refresh(); setInterval(refresh, 30000);
-</script></body></html>`;
-
-http.createServer((req, res) => {
-  if (req.url === '/api/state') {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ entries: state.entries }));
-  } else if (req.url === '/healthz') {
-    res.writeHead(200); res.end('ok');
-  } else {
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(PAGE);
-  }
-}).listen(PORT, () => console.log(`web on :${PORT}`));
-
 // ---------- boot ----------
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -304,6 +249,20 @@ client.on('interactionCreate', async interaction => {
 client.once('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}, ${GAMES.length} games in catalog`);
   await updatePinnedMessage(client);
+});
+
+startWeb({
+  state,
+  // A freshly uploaded ROM that matches a requested title flips it to owned.
+  onLibraryChange(rom) {
+    const norm = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const entry = state.entries.find(e => e.status === 'requested' && norm(e.title) === norm(rom.title));
+    if (!entry) return;
+    entry.status = 'owned';
+    entry.gotAt = new Date().toISOString();
+    saveState();
+    updatePinnedMessage(client).catch(() => {});
+  },
 });
 
 await registerCommands();

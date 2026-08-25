@@ -1,0 +1,292 @@
+// Web side of pocket-librarian: Discord OAuth, ROM library storage,
+// sync-set API, and the single-page app (served from web/app.html).
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const CLIENT_ID = process.env.DISCORD_APP_ID;
+const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
+const ALLOWED = (process.env.ALLOWED_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+const PUBLIC_URL = process.env.PUBLIC_URL || 'https://pocket.kodloki.io';
+const ROMS_DIR = process.env.ROMS_DIR || './roms';
+const DATA_DIR = process.env.DATA_DIR || './data-state';
+const PORT = Number(process.env.PORT || 8080);
+
+let SESSION_SECRET = process.env.SESSION_SECRET;
+if (!SESSION_SECRET) {
+  SESSION_SECRET = crypto.randomBytes(32).toString('hex');
+  console.warn('SESSION_SECRET not set — sessions will reset on every restart');
+}
+
+// Platform -> folder under Assets/ on the SD card (and under ROMS_DIR here).
+export const FOLDERS = {
+  GB: 'gb', GBC: 'gbc', GBA: 'gba', NES: 'nes', SNES: 'snes',
+  Genesis: 'genesis', PCE: 'pce', 'PCE-CD': 'pcecd', 'Sega CD': 'segacd',
+  GG: 'gg', Lynx: 'lynx', NGPC: 'ngpc', Other: 'other',
+};
+const PLATFORM_BY_FOLDER = Object.fromEntries(Object.entries(FOLDERS).map(([p, f]) => [f, p]));
+
+const APP_HTML = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'web', 'app.html'), 'utf8');
+
+// ---------- rom index ----------
+const INDEX_FILE = path.join(DATA_DIR, 'roms-index.json');
+let index = { roms: {}, syncSets: {} };   // roms[id] = {platform,file,size,sha1,title,by,at}
+try { index = JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8')); } catch { /* first boot */ }
+
+function saveIndex() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const tmp = INDEX_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(index));
+  fs.renameSync(tmp, INDEX_FILE);
+}
+
+const romId = (platform, file) => `${FOLDERS[platform] ?? 'other'}/${file}`;
+const cleanTitle = f => f.replace(/\.[^.]+$/, '').replace(/\s*\([^)]*\)/g, '').replace(/\s*\[[^\]]*\]/g, '').trim();
+
+async function sha1File(p) {
+  return new Promise((resolve, reject) => {
+    const h = crypto.createHash('sha1');
+    fs.createReadStream(p).on('data', d => h.update(d)).on('end', () => resolve(h.digest('hex'))).on('error', reject);
+  });
+}
+
+// Pick up files added out-of-band (bulk copy into the PVC) on boot.
+async function reconcile() {
+  fs.mkdirSync(ROMS_DIR, { recursive: true });
+  let changed = false;
+  for (const folder of await fsp.readdir(ROMS_DIR).catch(() => [])) {
+    const dir = path.join(ROMS_DIR, folder);
+    if (!(await fsp.stat(dir)).isDirectory()) continue;
+    const platform = PLATFORM_BY_FOLDER[folder] ?? 'Other';
+    for (const file of await fsp.readdir(dir)) {
+      const id = `${folder}/${file}`;
+      if (index.roms[id]) continue;
+      const st = await fsp.stat(path.join(dir, file));
+      if (!st.isFile()) continue;
+      index.roms[id] = {
+        platform, file, size: st.size, sha1: null,
+        title: cleanTitle(file), at: new Date().toISOString(),
+      };
+      changed = true;
+    }
+  }
+  // Drop index entries whose file vanished
+  for (const [id, r] of Object.entries(index.roms)) {
+    if (!fs.existsSync(path.join(ROMS_DIR, id))) { delete index.roms[id]; changed = true; }
+  }
+  if (changed) saveIndex();
+  // Hash anything unhashed, lazily
+  for (const [id, r] of Object.entries(index.roms)) {
+    if (r.sha1) continue;
+    try { r.sha1 = await sha1File(path.join(ROMS_DIR, id)); saveIndex(); } catch { /* next boot */ }
+  }
+}
+
+// ---------- sessions ----------
+const b64u = b => Buffer.from(b).toString('base64url');
+const sign = data => crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+
+function makeCookie(user) {
+  const payload = b64u(JSON.stringify({ ...user, exp: Date.now() + 30 * 86400_000 }));
+  return `${payload}.${sign(payload)}`;
+}
+function readSession(req) {
+  try {
+    const raw = (req.headers.cookie || '').split(/;\s*/).find(c => c.startsWith('session='))?.slice(8);
+    if (!raw) return null;
+    const [payload, sig] = raw.split('.');
+    if (!payload || !sig) return null;
+    const expected = Buffer.from(sign(payload));
+    const got = Buffer.from(sig);
+    if (got.length !== expected.length || !crypto.timingSafeEqual(expected, got)) return null;
+    const user = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    if (user.exp < Date.now()) return null;
+    return user;
+  } catch {
+    return null;
+  }
+}
+
+// ---------- helpers ----------
+const json = (res, code, obj) => {
+  res.writeHead(code, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(obj));
+};
+const readBody = req => new Promise((resolve, reject) => {
+  const chunks = [];
+  let len = 0;
+  req.on('data', c => { len += c.length; if (len > 1e6) reject(new Error('too big')); else chunks.push(c); });
+  req.on('end', () => resolve(Buffer.concat(chunks).toString()));
+  req.on('error', reject);
+});
+const safeName = s => {
+  const n = path.basename(String(s || ''));
+  return n && !n.startsWith('.') && !n.includes('..') ? n : null;
+};
+
+// ---------- server ----------
+export function startWeb({ state, onLibraryChange }) {
+  reconcile().catch(e => console.error('reconcile failed:', e));
+
+  const pending = new Map(); // oauth state -> ts
+
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url, PUBLIC_URL);
+    const p = url.pathname;
+    const user = readSession(req);
+    const needAuth = () => { json(res, 401, { error: 'login required' }); return false; };
+    const authed = () => (user ? true : needAuth());
+
+    try {
+      // ----- pages / health -----
+      if (p === '/healthz') { res.writeHead(200); res.end('ok'); return; }
+      if (p === '/') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end(APP_HTML); return;
+      }
+
+      // ----- oauth -----
+      if (p === '/auth/login') {
+        const st = crypto.randomBytes(16).toString('hex');
+        pending.set(st, Date.now());
+        for (const [k, t] of pending) if (Date.now() - t > 600_000) pending.delete(k);
+        const q = new URLSearchParams({
+          client_id: CLIENT_ID, response_type: 'code', scope: 'identify',
+          redirect_uri: `${PUBLIC_URL}/auth/callback`, state: st,
+        });
+        res.writeHead(302, { location: `https://discord.com/oauth2/authorize?${q}` });
+        res.end(); return;
+      }
+      if (p === '/auth/callback') {
+        const st = url.searchParams.get('state');
+        if (!st || !pending.delete(st)) { res.writeHead(400); res.end('bad state'); return; }
+        const tr = await fetch('https://discord.com/api/oauth2/token', {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: CLIENT_ID, client_secret: CLIENT_SECRET,
+            grant_type: 'authorization_code', code: url.searchParams.get('code'),
+            redirect_uri: `${PUBLIC_URL}/auth/callback`,
+          }),
+        }).then(r => r.json());
+        if (!tr.access_token) { res.writeHead(403); res.end('oauth failed'); return; }
+        const me = await fetch('https://discord.com/api/users/@me', {
+          headers: { authorization: `Bearer ${tr.access_token}` },
+        }).then(r => r.json());
+        if (!ALLOWED.includes(me.id)) { res.writeHead(403); res.end('not on the allowlist'); return; }
+        const cookie = makeCookie({ id: me.id, name: me.global_name || me.username });
+        res.writeHead(302, {
+          'set-cookie': `session=${cookie}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${30 * 86400}`,
+          location: '/',
+        });
+        res.end(); return;
+      }
+      if (p === '/auth/logout') {
+        res.writeHead(302, { 'set-cookie': 'session=; Path=/; Max-Age=0', location: '/' });
+        res.end(); return;
+      }
+
+      // ----- public checklist -----
+      if (p === '/api/me') { json(res, 200, { user: user ?? null }); return; }
+      if (p === '/api/state') { json(res, 200, { entries: state.entries }); return; }
+
+      // ----- library -----
+      if (p === '/api/roms' && req.method === 'GET') {
+        if (!authed()) return;
+        json(res, 200, { roms: Object.entries(index.roms).map(([id, r]) => ({ id, ...r })) });
+        return;
+      }
+      if (p === '/api/rom' && req.method === 'PUT') {
+        if (!authed()) return;
+        const platform = FOLDERS[url.searchParams.get('platform')] !== undefined
+          ? url.searchParams.get('platform') : 'Other';
+        const file = safeName(url.searchParams.get('name'));
+        if (!file) { json(res, 400, { error: 'bad name' }); return; }
+        const folder = FOLDERS[platform];
+        const dir = path.join(ROMS_DIR, folder);
+        fs.mkdirSync(dir, { recursive: true });
+        const dest = path.join(dir, file);
+        const tmp = dest + '.uploading';
+        const hash = crypto.createHash('sha1');
+        let size = 0;
+        const out = fs.createWriteStream(tmp);
+        req.on('data', c => { hash.update(c); size += c.length; });
+        req.pipe(out);
+        out.on('finish', () => {
+          fs.renameSync(tmp, dest);
+          const id = romId(platform, file);
+          index.roms[id] = {
+            platform, file, size, sha1: hash.digest('hex'),
+            title: cleanTitle(file), by: user.name, at: new Date().toISOString(),
+          };
+          saveIndex();
+          onLibraryChange?.(index.roms[id]);
+          json(res, 200, { id, ...index.roms[id] });
+        });
+        out.on('error', e => { fs.rmSync(tmp, { force: true }); json(res, 500, { error: e.message }); });
+        return;
+      }
+      const romMatch = p.match(/^\/api\/rom\/([a-z]+)\/(.+)$/);
+      if (romMatch) {
+        if (!authed()) return;
+        const file = safeName(decodeURIComponent(romMatch[2]));
+        const id = file && `${romMatch[1]}/${file}`;
+        const entry = id && index.roms[id];
+        if (!entry) { json(res, 404, { error: 'not found' }); return; }
+        const full = path.join(ROMS_DIR, id);
+        if (req.method === 'DELETE') {
+          fs.rmSync(full, { force: true });
+          delete index.roms[id];
+          for (const set of Object.values(index.syncSets)) {
+            const i = set.indexOf(id); if (i >= 0) set.splice(i, 1);
+          }
+          saveIndex();
+          json(res, 200, { ok: true }); return;
+        }
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'content-length': entry.size,
+          'content-disposition': `attachment; filename="${entry.file}"`,
+        });
+        fs.createReadStream(full).pipe(res);
+        return;
+      }
+
+      // ----- sync sets -----
+      if (p === '/api/syncset') {
+        if (!authed()) return;
+        if (req.method === 'PUT') {
+          const ids = JSON.parse(await readBody(req));
+          if (!Array.isArray(ids)) { json(res, 400, { error: 'array expected' }); return; }
+          index.syncSets[user.id] = ids.filter(id => index.roms[id]);
+          saveIndex();
+        }
+        json(res, 200, { ids: index.syncSets[user.id] ?? [] });
+        return;
+      }
+      if (p === '/api/sync/manifest') {
+        if (!authed()) return;
+        const items = (index.syncSets[user.id] ?? [])
+          .filter(id => index.roms[id])
+          .map(id => {
+            const r = index.roms[id];
+            return { id, folder: FOLDERS[r.platform] ?? 'other', file: r.file, size: r.size, sha1: r.sha1 };
+          });
+        json(res, 200, { items });
+        return;
+      }
+
+      res.writeHead(404); res.end('not found');
+    } catch (e) {
+      console.error(`${req.method} ${p} failed:`, e);
+      if (!res.headersSent) json(res, 500, { error: 'internal error' });
+    }
+  });
+
+  server.listen(PORT, () => console.log(`web on :${PORT}`));
+  return server;
+}
