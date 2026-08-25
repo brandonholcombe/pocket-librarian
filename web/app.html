@@ -402,6 +402,8 @@ async function uploadFiles(files) {
       [/^gba_bios\.bin$/, 'GBA'], [/^lynxboot\.img$/, 'Lynx'],
       [/^disksys\.rom$/, 'NES'], [/^syscard.*\.pce$/, 'PCE-CD'],
       [/^bios_cd_.*\.bin$/, 'Sega CD'],
+      [/^(dmg0?|gb|mgb)_?(bios|boot|rom)\.bin$/, 'GB'],
+      [/^(cgb|gbc)_?(bios|boot|rom)\.bin$/, 'GBC'],
     ];
     const platform = $('platformSel').value ||
       SUPPORT.find(([re]) => re.test(lower))?.[1] || EXT[ext] || 'Other';

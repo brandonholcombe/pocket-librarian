@@ -55,6 +55,8 @@ const SUPPORT_FILES = [
   [/^gba_bios\.bin$/i, 'GBA'], [/^lynxboot\.img$/i, 'Lynx'],
   [/^disksys\.rom$/i, 'NES'], [/^syscard.*\.pce$/i, 'PCE-CD'],
   [/^bios_cd_.*\.bin$/i, 'Sega CD'],
+  [/^(dmg0?|gb|mgb)_?(bios|boot|rom)\.bin$/i, 'GB'],
+  [/^(cgb|gbc)_?(bios|boot|rom)\.bin$/i, 'GBC'],
 ];
 const supportPlatform = name => SUPPORT_FILES.find(([re]) => re.test(name))?.[1];
 const PLATFORM_BY_FOLDER = Object.fromEntries(Object.entries(FOLDERS).map(([p, f]) => [f, p]));
