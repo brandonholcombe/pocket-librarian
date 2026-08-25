@@ -6,6 +6,8 @@ import { unzipSync } from 'fflate';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 const DATA_DIR = process.env.DATA_DIR || './data-state';
 const CACHE = path.join(DATA_DIR, 'provision');
@@ -106,10 +108,16 @@ export async function getFirmware() {
     const res = await fetch(`${FIRMWARE_BASE}/${version}/download`);
     if (!res.ok) throw new Error(`firmware download ${res.status}`);
     const file = decodeURIComponent(new URL(res.url).pathname.split('/').pop() || `pocket_firmware_${version}.bin`);
-    const buf = Buffer.from(await res.arrayBuffer());
     fs.mkdirSync(CACHE, { recursive: true });
-    fs.writeFileSync(path.join(CACHE, file), buf);
-    const info = { version, file, size: buf.length, sha1: crypto.createHash('sha1').update(buf).digest('hex') };
+    // stream to disk — the bin is ~55MB and must not be buffered in memory
+    const tmp = path.join(CACHE, file + '.tmp');
+    const hash = crypto.createHash('sha1');
+    let size = 0;
+    const src = Readable.fromWeb(res.body);
+    src.on('data', c => { hash.update(c); size += c.length; });
+    await pipeline(src, fs.createWriteStream(tmp));
+    fs.renameSync(tmp, path.join(CACHE, file));
+    const info = { version, file, size, sha1: hash.digest('hex') };
     fs.writeFileSync(meta, JSON.stringify(info));
     firmware = { at: Date.now(), ...info, path: path.join(CACHE, file) };
     return firmware;
