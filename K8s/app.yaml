@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pocket-librarian
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pocket-librarian-data
+  namespace: pocket-librarian
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: linode-block-storage-retain
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pocket-librarian
+  namespace: pocket-librarian
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pocket-librarian
+  template:
+    metadata:
+      labels:
+        app: pocket-librarian
+    spec:
+      containers:
+        - name: bot
+          image: bholcombe/pocket-librarian-bot:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: pocket-librarian-secrets
+          env:
+            - name: PUBLIC_URL
+              value: https://pocket.kodloki.io
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pocket-librarian-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pocket-librarian
+  namespace: pocket-librarian
+spec:
+  selector:
+    app: pocket-librarian
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pocket-librarian
+  namespace: pocket-librarian
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [pocket.kodloki.io]
+      secretName: pocket-librarian-tls
+  rules:
+    - host: pocket.kodloki.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pocket-librarian
+                port:
+                  number: 80

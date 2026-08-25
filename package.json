@@ -1,0 +1,14 @@
+{
+  "name": "pocket-librarian",
+  "version": "1.0.0",
+  "description": "Discord bot + web checklist for the family Analogue Pocket game library",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "build-db": "node scripts/build-games-db.mjs"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3"
+  }
+}
