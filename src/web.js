@@ -391,6 +391,9 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
           headers: { authorization: `Bearer ${tr.access_token}` },
         }).then(r => r.json());
         if (!(await isAllowed(me.id))) { res.writeHead(403); res.end('not a member of the family server'); return; }
+        index.users = index.users ?? {};
+        index.users[me.id] = me.global_name || me.username;
+        saveIndex();
         const cookie = makeCookie({ id: me.id, name: me.global_name || me.username });
         res.writeHead(302, {
           'set-cookie': `session=${cookie}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${30 * 86400}`,
@@ -557,12 +560,66 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
         json(res, 200, { files: await savesManifest(user.id) });
         return;
       }
-      if (p === '/api/saves/file') {
+      if (p === '/api/saves/users') {
+        if (!authed()) return;
+        // users known to the system: recorded at login, plus anyone with a sync set
+        const known = { ...(index.users ?? {}) };
+        for (const uid of Object.keys(index.syncSets ?? {})) known[uid] ??= 'user…' + uid.slice(-4);
+        json(res, 200, { users: Object.entries(known).map(([id, name]) => ({ id, name })) });
+        return;
+      }
+      if (p === '/api/saves/versions') {
         if (!authed()) return;
         const rel = saveSafePath(url.searchParams.get('path'));
         if (!rel) { json(res, 400, { error: 'bad path' }); return; }
         const userDir = path.join(SAVES_DIR, user.id);
         const full = path.join(userDir, rel);
+        const out = { current: null, versions: [] };
+        if (fs.existsSync(full)) {
+          const st = fs.statSync(full);
+          out.current = { size: st.size, mtime: st.mtimeMs };
+        }
+        const histDir = path.join(userDir, '.history', path.dirname(rel));
+        const suffix = `__${path.basename(rel)}`;
+        for (const n of (fs.existsSync(histDir) ? fs.readdirSync(histDir) : []).filter(n => n.endsWith(suffix)).sort().reverse()) {
+          out.versions.push({ version: n, ts: n.slice(0, n.indexOf('__')), size: fs.statSync(path.join(histDir, n)).size });
+        }
+        json(res, 200, out);
+        return;
+      }
+      if (p === '/api/saves/share' && req.method === 'POST') {
+        if (!authed()) return;
+        const body = JSON.parse(await readBody(req));
+        const rel = saveSafePath(body.path);
+        const to = String(body.to ?? '');
+        const knownUser = (index.users ?? {})[to] || (index.syncSets ?? {})[to];
+        if (!rel || !knownUser || to === user.id) { json(res, 400, { error: 'bad target or path' }); return; }
+        const srcDir = path.join(SAVES_DIR, user.id);
+        let src = path.join(srcDir, rel);
+        if (body.version) {
+          const v = String(body.version);
+          if (v.includes('/') || !v.endsWith(`__${path.basename(rel)}`)) { json(res, 400, { error: 'bad version' }); return; }
+          src = path.join(srcDir, '.history', path.dirname(rel), v);
+        }
+        if (!fs.existsSync(src)) { json(res, 404, { error: 'not found' }); return; }
+        const destDir = path.join(SAVES_DIR, to);
+        rotateHistory(destDir, rel);
+        fs.mkdirSync(path.dirname(path.join(destDir, rel)), { recursive: true });
+        fs.copyFileSync(src, path.join(destDir, rel));
+        json(res, 200, { ok: true, to });
+        return;
+      }
+      if (p === '/api/saves/file') {
+        if (!authed()) return;
+        const rel = saveSafePath(url.searchParams.get('path'));
+        if (!rel) { json(res, 400, { error: 'bad path' }); return; }
+        const userDir = path.join(SAVES_DIR, user.id);
+        let full = path.join(userDir, rel);
+        const ver = url.searchParams.get('version');
+        if (ver && req.method === 'GET') {
+          if (ver.includes('/') || !ver.endsWith(`__${path.basename(rel)}`)) { json(res, 400, { error: 'bad version' }); return; }
+          full = path.join(userDir, '.history', path.dirname(rel), ver);
+        }
         if (req.method === 'PUT') {
           const tmp = full + '.uploading';
           fs.mkdirSync(path.dirname(full), { recursive: true });

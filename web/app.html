@@ -165,7 +165,11 @@
   <button class="primary" id="goSync" hidden>Download missing to card</button>
   <button class="ghost" id="deepVerify" hidden>Deep verify card (hash check)</button>
   <div id="syncProg"></div>
-  <details id="coresAdv" style="margin-top:1.6rem">
+  <details id="savesMenu" style="margin-top:1.6rem">
+    <summary class="muted" style="cursor:pointer">Save backups — version history & sharing</summary>
+    <div id="savesList" style="margin-top:.6rem"></div>
+  </details>
+  <details id="coresAdv" style="margin-top:1rem">
     <summary class="muted" style="cursor:pointer">Extra cores (advanced) — for arcade games or
       systems you don't have games for yet; everything else is automatic</summary>
     <div class="toolbar" style="margin-top:.6rem">
@@ -244,6 +248,80 @@ function showTab(name) {
 }
 $('coresAdv').addEventListener('toggle', () => {
   if ($('coresAdv').open && !cores.length) loadCores();
+});
+
+// ---- save backups menu ----
+let saveUsers = [];
+$('savesMenu').addEventListener('toggle', () => { if ($('savesMenu').open) loadSavesMenu(); });
+async function loadSavesMenu() {
+  $('savesList').innerHTML = '<span class="muted">loading…</span>';
+  const [man, us] = await Promise.all([
+    fetch('/api/saves/manifest').then(r => r.json()),
+    fetch('/api/saves/users').then(r => r.json()),
+  ]);
+  saveUsers = (us.users || []).filter(u => u.id !== me.id);
+  if (!man.files.length) {
+    $('savesList').innerHTML = '<span class="muted">no saves backed up yet — pick your card and scan first</span>';
+    return;
+  }
+  $('savesList').innerHTML = '<ul class="plain">' + man.files.map((f, i) =>
+    '<li style="flex-wrap:wrap"><span class="t">' + esc(f.path.replace(/^Saves\//, '')) + '</span>' +
+    '<span class="meta">' + fmtMB(f.size) + '</span>' +
+    '<button class="ghost" style="font-size:.75rem;padding:.25rem .6rem" data-vers="' + esc(f.path) + '">history</button>' +
+    '<button class="ghost" style="font-size:.75rem;padding:.25rem .6rem" data-shr="' + esc(f.path) + '">share</button>' +
+    '<div style="flex-basis:100%" id="vrow-' + i + '" data-for="' + esc(f.path) + '"></div></li>'
+  ).join('') + '</ul>';
+}
+const fmtTs = ts => { try { return new Date(ts.replace(/-(\d\d)-(\d\d)-(\d+)Z$/, ':$1:$2.$3Z')).toLocaleString(); } catch { return ts; } };
+async function pickShareTarget() {
+  if (!saveUsers.length) { alert('Nobody else has logged in yet — they appear here after their first login.'); return null; }
+  if (saveUsers.length === 1)
+    return confirm('Share this save with ' + saveUsers[0].name + '? It lands in their backup; they restore it from their own Save backups menu.') ? saveUsers[0] : null;
+  const name = prompt('Share with whom? ' + saveUsers.map(u => u.name).join(', '));
+  return saveUsers.find(u => u.name.toLowerCase() === (name || '').trim().toLowerCase()) ?? null;
+}
+$('savesList').addEventListener('click', async e => {
+  const versBtn = e.target.closest('[data-vers]');
+  const shrBtn = e.target.closest('[data-shr]');
+  const restBtn = e.target.closest('[data-restore]');
+  const shrVerBtn = e.target.closest('[data-shrver]');
+  if (versBtn) {
+    const p = versBtn.dataset.vers;
+    const row = document.querySelector('[data-for="' + CSS.escape(p) + '"]');
+    row.innerHTML = '<span class="muted">loading…</span>';
+    const v = await (await fetch('/api/saves/versions?path=' + encodeURIComponent(p))).json();
+    const line = (label, ver, size) =>
+      '<div style="display:flex;gap:.6rem;align-items:center;padding:.25rem 0">' +
+      '<span class="meta" style="flex:1">' + esc(label) + ' · ' + fmtMB(size) + '</span>' +
+      '<button class="ghost" style="font-size:.72rem;padding:.2rem .55rem" data-restore="' + esc(p) + '" data-ver="' + esc(ver) + '">restore to card</button>' +
+      '<button class="ghost" style="font-size:.72rem;padding:.2rem .55rem" data-shrver="' + esc(p) + '" data-ver="' + esc(ver) + '">share</button></div>';
+    row.innerHTML =
+      (v.current ? line('current (' + new Date(v.current.mtime).toLocaleString() + ')', '', v.current.size) : '') +
+      v.versions.map(x => line(fmtTs(x.ts), x.version, x.size)).join('') ||
+      '<span class="muted">no versions</span>';
+    return;
+  }
+  if (restBtn) {
+    if (!cardHandle) { alert('Pick your SD card first (button above), then restore.'); return; }
+    const p = restBtn.dataset.restore, ver = restBtn.dataset.ver;
+    if (!confirm('Write this version of\n' + p + '\nonto the card, replacing what\'s there?')) return;
+    const res = await fetch('/api/saves/file?path=' + encodeURIComponent(p) + (ver ? '&version=' + encodeURIComponent(ver) : ''));
+    if (!res.ok) { alert('fetch failed'); return; }
+    await writeCardFile(cardHandle, p, res, Number(res.headers.get('content-length')) || 1);
+    restBtn.textContent = 'restored ✓';
+    return;
+  }
+  if (shrBtn || shrVerBtn) {
+    const p = (shrBtn ?? shrVerBtn).dataset.shr ?? shrVerBtn.dataset.shrver;
+    const ver = shrVerBtn?.dataset.ver || '';
+    const target = await pickShareTarget();
+    if (!target) return;
+    const r = await fetch('/api/saves/share', {
+      method: 'POST',
+      body: JSON.stringify({ path: p, to: target.id, version: ver || undefined }),
+    });
+    (shrBtn ?? shrVerBtn).textContent = r.ok ? 'shared ✓' : 'failed';
+  }
 });
 
 // ---- cores ----
