@@ -25,6 +25,21 @@ async function isAllowed(userId) {
   });
   return r.ok;
 }
+
+// Admin = the Discord server's owner (or an explicit ADMIN_USER_IDS override)
+const ADMIN_IDS = (process.env.ADMIN_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+let ownerCache = { id: null, at: 0 };
+async function isAdmin(userId) {
+  if (ADMIN_IDS.includes(userId)) return true;
+  if (!GUILD_ID || !BOT_TOKEN) return false;
+  if (Date.now() - ownerCache.at > 3600_000) {
+    const r = await fetch(`https://discord.com/api/v10/guilds/${GUILD_ID}`, {
+      headers: { authorization: `Bot ${BOT_TOKEN}`, 'user-agent': 'DiscordBot (pocket-librarian, 1.0)' },
+    }).catch(() => null);
+    if (r?.ok) ownerCache = { id: (await r.json()).owner_id, at: Date.now() };
+  }
+  return ownerCache.id != null && ownerCache.id === userId;
+}
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://pocket.kodloki.io';
 const ROMS_DIR = process.env.ROMS_DIR || './roms';
 const DATA_DIR = process.env.DATA_DIR || './data-state';
@@ -341,7 +356,10 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
       }
 
       // ----- session probe is the only public API -----
-      if (p === '/api/me') { json(res, 200, { user: user ?? null }); return; }
+      if (p === '/api/me') {
+        json(res, 200, { user: user ? { ...user, admin: await isAdmin(user.id) } : null });
+        return;
+      }
       if (p === '/api/state') {
         if (!authed()) return;
         json(res, 200, { entries: state.entries }); return;
@@ -464,6 +482,7 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
         if (!entry) { json(res, 404, { error: 'not found' }); return; }
         const full = path.join(ROMS_DIR, id);
         if (req.method === 'DELETE') {
+          if (!(await isAdmin(user.id))) { json(res, 403, { error: 'admins only' }); return; }
           fs.rmSync(full, { force: true });
           delete index.roms[id];
           for (const set of Object.values(index.syncSets)) {
