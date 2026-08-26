@@ -253,7 +253,9 @@ const readBody = req => new Promise((resolve, reject) => {
   req.on('error', reject);
 });
 const safeName = s => {
-  const n = path.basename(String(s || ''));
+  let n = path.basename(String(s || ''));
+  // lowercase the extension — the Pocket's file browser can be case-sensitive
+  n = n.replace(/\.([^.]+)$/, m => m.toLowerCase());
   return n && !n.startsWith('.') && !n.includes('..') ? n : null;
 };
 
