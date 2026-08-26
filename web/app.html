@@ -46,7 +46,24 @@
   .cover .ph { font-size: 2.2rem; opacity: .5; }
   .badge { position: absolute; top: 8px; right: 8px; background: var(--accent);
            color: #fff; border-radius: 999px; font-size: .75rem; padding: .15rem .5rem;
-           box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+           box-shadow: 0 2px 8px rgba(0,0,0,.5); z-index: 2; }
+  .hoverlay { position: absolute; inset: 0; z-index: 1; opacity: 0;
+              transition: opacity .18s; pointer-events: none;
+              background: linear-gradient(to top, rgba(10,9,14,.94) 0%,
+                rgba(10,9,14,.6) 32%, rgba(10,9,14,0) 62%);
+              display: flex; flex-direction: column; justify-content: flex-end;
+              padding: .55rem .6rem; }
+  .card:hover .hoverlay { opacity: 1; }
+  .hoverlay .d { font-size: .72rem; color: #d8d4e6; line-height: 1.5;
+                 text-shadow: 0 1px 2px rgba(0,0,0,.8); }
+  .syncbtn { position: absolute; top: 6px; left: 6px; width: 30px; height: 30px;
+             border-radius: 999px; border: 0; background: rgba(18,16,26,.85);
+             color: #fff; font-size: 1.05rem; line-height: 1; cursor: pointer;
+             opacity: 0; transition: opacity .15s, background .15s; z-index: 3; }
+  .card:hover .syncbtn { opacity: 1; }
+  .syncbtn:hover { background: var(--accent); }
+  .syncbtn.in { background: var(--accent); }
+  .syncbtn.in:hover { background: #d98324; }
   .badge.want { background: #d98324; }
   .cinfo { padding: .5rem .6rem .6rem; }
   .cinfo .t { font-size: .85rem; line-height: 1.25; overflow: hidden; display: -webkit-box;
@@ -327,12 +344,24 @@ function renderRoms() {
     (!sf || (sf === 'in') === syncSet.has(r.id)));
   $('libCount').textContent = hits.length + ' of ' + roms.length +
     ' games · sync set: ' + syncSet.size;
-  const card = r =>
-    '<div class="card" data-i="' + roms.indexOf(r) + '">' +
-    coverHtml(r.platform, r.title, syncSet.has(r.id) ? '<span class="badge">✓ sync</span>' : '') +
-    '<div class="cinfo"><div class="t">' + esc(r.title) + '</div>' +
-    '<div class="m"><span class="chip">' + esc(r.platform) + '</span>' +
-    (r.year ? esc(r.year) : '') + '</div></div></div>';
+  const card = r => {
+    const inSet = syncSet.has(r.id);
+    const details = [
+      [r.year, r.genre].filter(Boolean).join(' · '),
+      r.developer,
+      [fmtMB(r.size), r.region].filter(Boolean).join(' · '),
+    ].filter(Boolean).map(esc).join('<br>');
+    return '<div class="card" data-i="' + roms.indexOf(r) + '">' +
+      coverHtml(r.platform, r.title,
+        (inSet ? '<span class="badge">✓ sync</span>' : '') +
+        '<button class="syncbtn' + (inSet ? ' in' : '') + '" data-sync="' + esc(r.id) +
+        '" title="' + (inSet ? 'Remove from sync set' : 'Add to sync set') + '">' +
+        (inSet ? '−' : '+') + '</button>' +
+        '<div class="hoverlay"><div class="d">' + details + '</div></div>') +
+      '<div class="cinfo"><div class="t">' + esc(r.title) + '</div>' +
+      '<div class="m"><span class="chip">' + esc(r.platform) + '</span>' +
+      (r.year ? esc(r.year) : '') + '</div></div></div>';
+  };
   const empty = '<div class="muted">nothing here yet — upload some ROMs above</div>';
   lastShown = hits;
   lastGroups = new Map();
@@ -371,6 +400,14 @@ $('romGrid').addEventListener('click', e => {
 for (const id of ['q', 'platFilter', 'setFilter', 'groupBy'])
   $(id).addEventListener('input', renderRoms);
 $('romGrid').addEventListener('click', e => {
+  const sync = e.target.closest('.syncbtn');
+  if (sync) {
+    const id = sync.dataset.sync;
+    syncSet.has(id) ? syncSet.delete(id) : syncSet.add(id);
+    fetch('/api/syncset', { method: 'PUT', body: JSON.stringify([...syncSet]) });
+    renderRoms();
+    return;
+  }
   const card = e.target.closest('.card');
   if (card) openModal(roms[Number(card.dataset.i)]);
 });
