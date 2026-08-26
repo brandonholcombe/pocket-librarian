@@ -634,25 +634,57 @@ $('deepVerify').addEventListener('click', async () => {
   $('deepVerify').disabled = true;
   const checks = [];
   if (lastManifests?.firmware?.sha1)
-    checks.push({ rel: lastManifests.firmware.file, sha1: lastManifests.firmware.sha1, label: 'firmware' });
+    checks.push({ rel: lastManifests.firmware.file, sha1: lastManifests.firmware.sha1, url: lastManifests.firmware.url });
   for (const g of lastManifests?.games ?? [])
-    if (g.sha1) checks.push({ rel: 'Assets/' + g.folder + '/common/' + g.file, sha1: g.sha1, label: 'game' });
+    if (g.sha1) checks.push({
+      rel: 'Assets/' + g.folder + '/common/' + g.file, sha1: g.sha1,
+      url: '/api/rom/' + g.folder + '/' + encodeURIComponent(g.file),
+    });
   const bad = [], absent = [];
   let ok = 0;
   for (let i = 0; i < checks.length; i++) {
     const c = checks[i];
     $('syncProg').innerHTML = 'Verifying (' + (i + 1) + '/' + checks.length + ') <b>' + esc(c.rel.split('/').at(-1)) + '</b>…';
     try {
-      (await sha1OfCardFile(c.rel)) === c.sha1 ? ok++ : bad.push(c.rel);
+      (await sha1OfCardFile(c.rel)) === c.sha1 ? ok++ : bad.push(c);
     } catch { absent.push(c.rel); }
+  }
+  // forensic diff on each mismatch: WHERE it differs tells us WHY
+  const reports = [];
+  for (const c of bad) {
+    $('syncProg').innerHTML = 'Analyzing mismatch: <b>' + esc(c.rel.split('/').at(-1)) + '</b>…';
+    try {
+      const segs = c.rel.split('/');
+      const dir = await dirByPath(cardHandle, segs.slice(0, -1), false);
+      const cardBuf = new Uint8Array(await (await (await dir.getFileHandle(segs.at(-1))).getFile()).arrayBuffer());
+      const srvBuf = new Uint8Array(await (await fetch(c.url)).arrayBuffer());
+      const n = Math.min(cardBuf.length, srvBuf.length);
+      let first = -1, last = -1, count = 0;
+      for (let j = 0; j < n; j++) {
+        if (cardBuf[j] !== srvBuf[j]) { if (first < 0) first = j; last = j; count++; }
+      }
+      const sizeNote = cardBuf.length !== srvBuf.length
+        ? 'card ' + cardBuf.length + ' vs server ' + srvBuf.length + ' bytes' : 'same size';
+      let verdict;
+      if (count === 0 && cardBuf.length > srvBuf.length)
+        verdict = '<span class="ok">ROM content intact — extra data appended after it (save data, harmless)</span>';
+      else if (first >= 0 && (last - first) < 131072 && count > 16)
+        verdict = '<span class="ok">one contiguous modified region @' + first + ' (' + count + ' bytes) — looks like in-file save/RTC data written by the core, not corruption</span>';
+      else if (count > 0 && count <= 16)
+        verdict = '<span class="warn">' + count + ' scattered byte flips (first @' + first + ') — BIT ROT: the card is corrupting data</span>';
+      else
+        verdict = '<span class="warn">' + count + ' bytes differ across @' + first + '–' + last + ' — extensive mismatch, rewrite this file</span>';
+      reports.push('<li>' + esc(c.rel.split('/').at(-1)) + ' <span class="meta">(' + sizeNote + ')</span><br>' + verdict + '</li>');
+    } catch (e) {
+      reports.push('<li class="warn">' + esc(c.rel) + ' — analysis failed: ' + esc(e.message) + '</li>');
+    }
   }
   $('syncProg').innerHTML =
     '<p>Deep verify: <b class="ok">' + ok + ' intact</b>' +
     (absent.length ? ' · ' + absent.length + ' not on card' : '') +
-    (bad.length ? ' · <b class="warn">' + bad.length + ' CORRUPT</b></p><ul class="plain">' +
-      bad.map(f => '<li class="warn">' + esc(f) + ' — content doesn\'t match, rewrite it (or distrust this card)</li>').join('') + '</ul>'
+    (bad.length ? ' · <b class="warn">' + bad.length + ' mismatched</b></p><ul class="plain">' + reports.join('') + '</ul>'
       : '</p>') +
-    (bad.length ? '<p class="muted">Corrupt files that were fully written once point at the card silently mangling data — typical of counterfeit cards. Reformat and re-test, or replace the card.</p>' : '');
+    (bad.length ? '<p class="muted">"Save data" verdicts are benign — the game modified its own file and it will keep working. Scattered bit flips are the card failing: back up saves and replace it.</p>' : '');
   $('deepVerify').disabled = false;
 });
 
