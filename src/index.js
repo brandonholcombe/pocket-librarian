@@ -160,23 +160,29 @@ function buildEmbed() {
     .setTimestamp();
 }
 
+// The pinned message is a static link card to the site; the live checklist
+// is available on demand via /list. Nothing to edit — just ensure it exists.
 async function updatePinnedMessage(client) {
   if (!CHANNEL_ID) return;
   try {
     const channel = await client.channels.fetch(CHANNEL_ID);
-    const embed = buildEmbed();
-    let msg = null;
     if (state.pinnedMessageId) {
-      msg = await channel.messages.fetch(state.pinnedMessageId).catch(() => null);
+      const existing = await channel.messages.fetch(state.pinnedMessageId).catch(() => null);
+      if (existing) return;
     }
-    if (msg) {
-      await msg.edit({ embeds: [embed] });
-    } else {
-      msg = await channel.send({ embeds: [embed] });
-      await msg.pin().catch(() => {});
-      state.pinnedMessageId = msg.id;
-      saveState();
-    }
+    const embed = new EmbedBuilder()
+      .setTitle('Pocket Library')
+      .setURL(PUBLIC_URL)
+      .setColor(0x8c52ff)
+      .setDescription(
+        `**[${PUBLIC_URL.replace('https://', '')}](${PUBLIC_URL})**\n` +
+        'Browse the library, request games, and sync your SD card.\n' +
+        'Commands: `/request` · `/got` · `/list` · `/help`',
+      );
+    const msg = await channel.send({ embeds: [embed] });
+    await msg.pin().catch(() => {});
+    state.pinnedMessageId = msg.id;
+    saveState();
   } catch (e) {
     console.error('pinned message update failed:', e.message);
   }
