@@ -717,7 +717,7 @@ async function scanCard() {
   $('goSync').textContent = 'Write everything to card (' + n + ' file' + (n === 1 ? '' : 's') + ')';
   $('goSync').hidden = n === 0;
   $('deepVerify').hidden = false;
-  lastManifests = { games: games.items, firmware: prov.firmware };
+  lastManifests = { games: games.items, firmware: prov.firmware, cores: prov.cores };
 }
 
 // hash files already on the card against the server's known-good SHA1s —
@@ -735,6 +735,9 @@ $('deepVerify').addEventListener('click', async () => {
   const checks = [];
   if (lastManifests?.firmware?.sha1)
     checks.push({ rel: lastManifests.firmware.file, sha1: lastManifests.firmware.sha1, url: lastManifests.firmware.url, size: lastManifests.firmware.size });
+  for (const core of lastManifests?.cores ?? [])
+    for (const f of core.files)
+      if (f.sha1) checks.push({ rel: f.path, sha1: f.sha1, url: f.url, size: f.size });
   for (const g of lastManifests?.games ?? [])
     if (g.sha1) checks.push({
       rel: 'Assets/' + g.folder + '/common/' + g.file, sha1: g.sha1, size: g.size,

@@ -558,7 +558,7 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
             out.cores.push({
               id, version,
               files: files.map(f => ({
-                path: f.path, size: f.size,
+                path: f.path, size: f.size, sha1: f.sha1,
                 url: `/api/corefile/${encodeURIComponent(id)}/${f.path.split('/').map(encodeURIComponent).join('/')}`,
               })),
             });

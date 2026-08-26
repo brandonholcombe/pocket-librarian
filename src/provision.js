@@ -87,7 +87,16 @@ export async function ensureCore(id) {
   const dir = path.join(CACHE, 'cores', id, core.version);
   const manifestFile = path.join(dir, '.manifest.json');
   if (fs.existsSync(manifestFile)) {
-    return { version: core.version, files: JSON.parse(fs.readFileSync(manifestFile, 'utf8')) };
+    let files = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+    // backfill sha1 for manifests written before hashes were recorded
+    if (files.some(f => !f.sha1)) {
+      files = files.map(f => f.sha1 ? f : {
+        ...f,
+        sha1: crypto.createHash('sha1').update(fs.readFileSync(path.join(dir, f.path))).digest('hex'),
+      });
+      fs.writeFileSync(manifestFile, JSON.stringify(files));
+    }
+    return { version: core.version, files };
   }
   const res = await fetch(core.download_url);
   if (!res.ok) throw new Error(`download failed (${res.status}) for ${id}`);
@@ -101,7 +110,7 @@ export async function ensureCore(id) {
     const dest = path.join(dir, rel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.writeFileSync(dest, buf);
-    files.push({ path: rel, size: buf.length });
+    files.push({ path: rel, size: buf.length, sha1: crypto.createHash('sha1').update(buf).digest('hex') });
   }
   fs.writeFileSync(manifestFile, JSON.stringify(files));
   return { version: core.version, files };
