@@ -734,10 +734,10 @@ $('deepVerify').addEventListener('click', async () => {
   $('deepVerify').disabled = true;
   const checks = [];
   if (lastManifests?.firmware?.sha1)
-    checks.push({ rel: lastManifests.firmware.file, sha1: lastManifests.firmware.sha1, url: lastManifests.firmware.url });
+    checks.push({ rel: lastManifests.firmware.file, sha1: lastManifests.firmware.sha1, url: lastManifests.firmware.url, size: lastManifests.firmware.size });
   for (const g of lastManifests?.games ?? [])
     if (g.sha1) checks.push({
-      rel: 'Assets/' + g.folder + '/common/' + g.file, sha1: g.sha1,
+      rel: 'Assets/' + g.folder + '/common/' + g.file, sha1: g.sha1, size: g.size,
       url: '/api/rom/' + g.folder + '/' + encodeURIComponent(g.file),
     });
   const bad = [], absent = [];
@@ -784,7 +784,33 @@ $('deepVerify').addEventListener('click', async () => {
     (absent.length ? ' · ' + absent.length + ' not on card' : '') +
     (bad.length ? ' · <b class="warn">' + bad.length + ' mismatched</b></p><ul class="plain">' + reports.join('') + '</ul>'
       : '</p>') +
-    (bad.length ? '<p class="muted">"Save data" verdicts are benign — the game modified its own file and it will keep working. Scattered bit flips are the card failing: back up saves and replace it.</p>' : '');
+    (bad.length
+      ? '<button class="primary" id="repairBtn">Rewrite ' + bad.length + ' mismatched file(s) from library</button>' +
+        '<p class="muted">Rewriting restores the verified-good copy. If the same files come back corrupt after a ' +
+        'rewrite, the card or reader is mangling writes — test with f3 or swap the reader.</p>'
+      : '');
+  if (bad.length) $('repairBtn').onclick = async () => {
+    $('repairBtn').disabled = true;
+    let fixed = 0, still = [];
+    for (let i = 0; i < bad.length; i++) {
+      const c = bad[i];
+      $('syncProg').innerHTML = 'Rewriting (' + (i + 1) + '/' + bad.length + ') <b>' +
+        esc(c.rel.split('/').at(-1)) + '</b>…<div class="bar"><div id="pb"></div></div>';
+      try {
+        const res = await fetch(c.url);
+        if (!res.ok) throw new Error('server ' + res.status);
+        await writeCardFile(cardHandle, c.rel, res, c.size,
+          p => { $('pb').style.width = Math.round(p * 100) + '%'; });
+        (await sha1OfCardFile(c.rel)) === c.sha1 ? fixed++ : still.push(c.rel);
+      } catch (e) { still.push(c.rel + ' — ' + e.message); }
+    }
+    $('syncProg').innerHTML = still.length
+      ? '<p class="warn">' + fixed + ' repaired, ' + still.length + ' STILL bad after rewrite:</p><ul class="plain">' +
+        still.map(f => '<li class="warn">' + esc(f) + '</li>').join('') +
+        '</ul><p class="muted">A file that fails verification immediately after a fresh write means the card or ' +
+        'reader is corrupting data. Run f3 (brew install f3) or try a different reader.</p>'
+      : '<p class="ok">All ' + fixed + ' file(s) repaired and verified. Eject and try the games again.</p>';
+  };
   $('deepVerify').disabled = false;
 });
 
