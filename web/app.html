@@ -64,6 +64,12 @@
   .syncbtn:hover { background: var(--accent); }
   .syncbtn.in { background: var(--accent); }
   .syncbtn.in:hover { background: #d98324; }
+
+  /* --- discovery shelves --- */
+  .rowh { font-size: .95rem; margin: 1.2rem 0 .5rem; color: var(--accent2); }
+  .shelfrow { display: flex; gap: 11px; overflow-x: auto; padding-bottom: .5rem;
+              scrollbar-width: thin; }
+  .shelfrow .card { flex: 0 0 132px; }
   .badge.want { background: #d98324; }
   .cinfo { padding: .5rem .6rem .6rem; }
   .cinfo .t { font-size: .85rem; line-height: 1.25; overflow: hidden; display: -webkit-box;
@@ -133,6 +139,8 @@
     <input type="file" id="filePick" multiple hidden>
   </div>
   <div id="upStatus"></div>
+  <div id="discover"></div>
+  <h2 class="rowh" style="margin-top:1.2rem">📚 Full library</h2>
   <div class="muted" id="libCount" style="margin:.4rem 0"></div>
   <div id="romGrid"></div>
 </section>
@@ -333,6 +341,43 @@ function groupedGrid(items, keyFn, cardFn, small, headerExtra) {
   ).join('');
 }
 
+function romCard(r) {
+  const inSet = syncSet.has(r.id);
+  const details = [
+    [r.year, r.genre].filter(Boolean).join(' · '),
+    r.developer,
+  ].filter(Boolean).map(esc).join('<br>');
+  return '<div class="card" data-i="' + roms.indexOf(r) + '">' +
+    coverHtml(r.platform, r.title,
+      (inSet ? '<span class="badge">✓ sync</span>' : '') +
+      '<button class="syncbtn' + (inSet ? ' in' : '') + '" data-sync="' + esc(r.id) +
+      '" title="' + (inSet ? 'Remove from sync set' : 'Add to sync set') + '">' +
+      (inSet ? '−' : '+') + '</button>' +
+      '<div class="hoverlay"><div class="d">' + details + '</div></div>') +
+    '<div class="cinfo"><div class="t">' + esc(r.title) + '</div>' +
+    '<div class="m"><span class="chip">' + esc(r.platform) + '</span>' +
+    (r.year ? esc(r.year) : '') + '</div></div></div>';
+}
+
+function renderDiscover() {
+  const filtering = $('q').value || $('platFilter').value || $('setFilter').value;
+  const el = $('discover');
+  if (filtering || !roms.length) { el.innerHTML = ''; return; }
+  const rows = [];
+  const popular = roms.filter(r => (r.syncCount ?? 0) >= 2)
+    .sort((a, b) => (b.syncCount ?? 0) - (a.syncCount ?? 0)).slice(0, 12);
+  if (popular.length) rows.push(['🔥 Popular syncs', popular]);
+  const recent = roms.filter(r => r.at)
+    .sort((a, b) => b.at.localeCompare(a.at)).slice(0, 12);
+  if (recent.length) rows.push(['🆕 Recently added', recent]);
+  const unsynced = roms.filter(r => !(r.syncCount > 0))
+    .sort((a, b) => (b.at ?? '').localeCompare(a.at ?? '')).slice(0, 12);
+  if (unsynced.length) rows.push(["💎 Not on anyone's card yet", unsynced]);
+  el.innerHTML = rows.map(([title, items]) =>
+    '<h2 class="rowh">' + title + '</h2><div class="shelfrow">' +
+    items.map(romCard).join('') + '</div>').join('');
+}
+
 function renderRoms() {
   const q = $('q').value.toLowerCase();
   const pf = $('platFilter').value;
@@ -344,24 +389,6 @@ function renderRoms() {
     (!sf || (sf === 'in') === syncSet.has(r.id)));
   $('libCount').textContent = hits.length + ' of ' + roms.length +
     ' games · sync set: ' + syncSet.size;
-  const card = r => {
-    const inSet = syncSet.has(r.id);
-    const details = [
-      [r.year, r.genre].filter(Boolean).join(' · '),
-      r.developer,
-      [fmtMB(r.size), r.region].filter(Boolean).join(' · '),
-    ].filter(Boolean).map(esc).join('<br>');
-    return '<div class="card" data-i="' + roms.indexOf(r) + '">' +
-      coverHtml(r.platform, r.title,
-        (inSet ? '<span class="badge">✓ sync</span>' : '') +
-        '<button class="syncbtn' + (inSet ? ' in' : '') + '" data-sync="' + esc(r.id) +
-        '" title="' + (inSet ? 'Remove from sync set' : 'Add to sync set') + '">' +
-        (inSet ? '−' : '+') + '</button>' +
-        '<div class="hoverlay"><div class="d">' + details + '</div></div>') +
-      '<div class="cinfo"><div class="t">' + esc(r.title) + '</div>' +
-      '<div class="m"><span class="chip">' + esc(r.platform) + '</span>' +
-      (r.year ? esc(r.year) : '') + '</div></div></div>';
-  };
   const empty = '<div class="muted">nothing here yet — upload some ROMs above</div>';
   lastShown = hits;
   lastGroups = new Map();
@@ -382,8 +409,9 @@ function renderRoms() {
       esc(name) + '">' + (allIn ? '− unsync all' : '＋ sync all') + '</button>';
   };
   $('romGrid').innerHTML = gb
-    ? groupedGrid(hits, keyFns[gb], card, false, headerBtn)
-    : '<div class="grid">' + hits.map(card).join('') + '</div>';
+    ? groupedGrid(hits, keyFns[gb], romCard, false, headerBtn)
+    : '<div class="grid">' + hits.map(romCard).join('') + '</div>';
+  renderDiscover();
 }
 let lastShown = [], lastGroups = new Map();
 function bulkToggle(items) {
@@ -399,7 +427,7 @@ $('romGrid').addEventListener('click', e => {
 });
 for (const id of ['q', 'platFilter', 'setFilter', 'groupBy'])
   $(id).addEventListener('input', renderRoms);
-$('romGrid').addEventListener('click', e => {
+function cardClick(e) {
   const sync = e.target.closest('.syncbtn');
   if (sync) {
     const id = sync.dataset.sync;
@@ -410,7 +438,9 @@ $('romGrid').addEventListener('click', e => {
   }
   const card = e.target.closest('.card');
   if (card) openModal(roms[Number(card.dataset.i)]);
-});
+}
+$('romGrid').addEventListener('click', cardClick);
+$('discover').addEventListener('click', cardClick);
 
 // ---- detail modal ----
 function openModal(r) {

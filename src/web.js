@@ -399,10 +399,13 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
       // ----- library -----
       if (p === '/api/roms' && req.method === 'GET') {
         if (!authed()) return;
+        const syncCounts = {};
+        for (const ids of Object.values(index.syncSets ?? {}))
+          for (const id of ids) syncCounts[id] = (syncCounts[id] || 0) + 1;
         json(res, 200, {
           roms: Object.entries(index.roms)
             .filter(([, r]) => !isSupport(r.file))
-            .map(([id, r]) => enrich(id, r)),
+            .map(([id, r]) => ({ ...enrich(id, r), syncCount: syncCounts[id] ?? 0 })),
         });
         return;
       }
