@@ -51,14 +51,16 @@ const EXT_PLATFORM = {
 };
 
 // well-known BIOS/support files, recognized by name (extensions are ambiguous)
+// [pattern, platform, canonical name the core's data.json requires]
 const SUPPORT_FILES = [
   [/^gba_bios\.bin$/i, 'GBA'], [/^lynxboot\.img$/i, 'Lynx'],
   [/^disksys\.rom$/i, 'NES'], [/^syscard.*\.pce$/i, 'PCE-CD'],
   [/^bios_cd_.*\.bin$/i, 'Sega CD'],
-  [/^(dmg0?|gb|mgb)_?(bios|boot|rom)\.bin$/i, 'GB'],
-  [/^(cgb|gbc)_?(bios|boot|rom)\.bin$/i, 'GBC'],
+  [/^(dmg0?|gb|mgb)_?(bios|boot|rom)\.bin$/i, 'GB', 'dmg_bios.bin'],
+  [/^(cgb|gbc)_?(bios|boot|rom)\.bin$/i, 'GBC', 'gbc_bios.bin'],
 ];
 const supportPlatform = name => SUPPORT_FILES.find(([re]) => re.test(name))?.[1];
+const canonicalName = name => SUPPORT_FILES.find(([re]) => re.test(name))?.[2] ?? name;
 const PLATFORM_BY_FOLDER = Object.fromEntries(Object.entries(FOLDERS).map(([p, f]) => [f, p]));
 
 // libretro-thumbnails system names, for boxart
@@ -385,7 +387,7 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
         if (!authed()) return;
         const platform = FOLDERS[url.searchParams.get('platform')] !== undefined
           ? url.searchParams.get('platform') : 'Other';
-        const file = safeName(url.searchParams.get('name'));
+        const file = canonicalName(safeName(url.searchParams.get('name')) ?? '') || null;
         if (!file) { json(res, 400, { error: 'bad name' }); return; }
         const folder = FOLDERS[platform];
         const dir = path.join(ROMS_DIR, folder);
@@ -419,8 +421,9 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
               fs.rmSync(tmp, { force: true });
               const added = [], skipped = [];
               for (const [entry, data] of Object.entries(entries)) {
-                const base = safeName(entry.split('/').pop());
-                if (!base || !data.length || entry.includes('__MACOSX')) continue;
+                const base0 = safeName(entry.split('/').pop());
+                if (!base0 || !data.length || entry.includes('__MACOSX')) continue;
+                const base = canonicalName(base0);
                 const plat = supportPlatform(base) ?? EXT_PLATFORM[base.split('.').pop().toLowerCase()];
                 if (!plat) { skipped.push(base); continue; }
                 const id = addRom(plat, base, Buffer.from(data));
