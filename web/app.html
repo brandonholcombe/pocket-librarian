@@ -90,7 +90,6 @@
 <nav id="tabs" hidden>
   <button data-tab="library" class="on">Library</button>
   <button data-tab="wishlist">Wishlist</button>
-  <button data-tab="cores">Cores</button>
   <button data-tab="sync">Sync to SD</button>
 </nav>
 
@@ -132,26 +131,24 @@
   <div id="ownedGrid"></div>
 </section>
 
-<section id="tab-cores" hidden>
-  <p class="muted">Pick the cores your card should have — they're downloaded and installed onto the
-  card by <b>Sync to SD</b>, along with the latest Analogue OS firmware. Handhelds and consoles
-  need one core per system; arcade games each have their own core.</p>
-  <div class="toolbar">
-    <input type="search" id="coreQ" placeholder="Search cores…">
-    <span class="muted" id="coreCount"></span>
-  </div>
-  <ul class="plain" id="coreList"></ul>
-</section>
-
 <section id="tab-sync" hidden>
   <p class="muted">Pick your SD card (its root folder). Works in Chrome and Edge on Mac & Windows.
-  One pass installs the latest firmware, your selected cores (Cores tab), and the games in your
-  sync set (Library tab).</p>
+  One pass installs the latest firmware, the cores and BIOS files your game choices imply, and the
+  games in your sync set (Library tab).</p>
   <button class="primary" id="pickCard">Choose SD card…</button>
   <div id="syncReport"></div>
   <button class="primary" id="goSync" hidden>Download missing to card</button>
   <button class="ghost" id="deepVerify" hidden>Deep verify card (hash check)</button>
   <div id="syncProg"></div>
+  <details id="coresAdv" style="margin-top:1.6rem">
+    <summary class="muted" style="cursor:pointer">Extra cores (advanced) — for arcade games or
+      systems you don't have games for yet; everything else is automatic</summary>
+    <div class="toolbar" style="margin-top:.6rem">
+      <input type="search" id="coreQ" placeholder="Search cores…">
+      <span class="muted" id="coreCount"></span>
+    </div>
+    <ul class="plain" id="coreList"></ul>
+  </details>
 </section>
 
 <div class="overlay" id="overlay" hidden></div>
@@ -181,7 +178,7 @@ async function boot() {
   $('logoutBtn').hidden = !me;
   $('tabs').hidden = !me;
   if (!me) {
-    for (const s of ['library', 'wishlist', 'cores', 'sync']) $('tab-' + s).hidden = true;
+    for (const s of ['library', 'wishlist', 'sync']) $('tab-' + s).hidden = true;
     document.querySelector('.wrap').insertAdjacentHTML('beforeend',
       '<div style="text-align:center;margin:4rem 0" id="landing">' +
       '<div style="font-size:3rem">🎮</div>' +
@@ -202,10 +199,12 @@ async function boot() {
 function showTab(name) {
   for (const b of document.querySelectorAll('#tabs button'))
     b.classList.toggle('on', b.dataset.tab === name);
-  for (const s of ['library', 'wishlist', 'cores', 'sync'])
+  for (const s of ['library', 'wishlist', 'sync'])
     $('tab-' + s).hidden = s !== name;
-  if (name === 'cores' && !cores.length) loadCores();
 }
+$('coresAdv').addEventListener('toggle', () => {
+  if ($('coresAdv').open && !cores.length) loadCores();
+});
 
 // ---- cores ----
 let cores = [], coreSet = new Set(), autoCores = new Set();
@@ -616,7 +615,9 @@ async function scanCard() {
                  : '<b class="ok">v' + esc(prov.firmware.version) + ' ✓</b>')
       : '<span class="warn">unavailable</span>') +
     (todo.staleFw.length ? ' <span class="muted">(+' + todo.staleFw.length + ' old firmware file(s) to remove)</span>' : '') +
-    '</p><p>Cores: <b>' + prov.cores.length + '</b> selected · files missing/outdated: <b class="' +
+    '</p><p>Cores: <b>' + prov.cores.length + '</b> (' +
+    esc(prov.cores.map(c => c.id.split('.')[1] || c.id).join(', ')) +
+    ') · files missing/outdated: <b class="' +
     (todo.coreFiles.length ? 'warn' : 'ok') + '">' + todo.coreFiles.length + '</b> of ' + coreFilesTotal +
     '</p><p>Games: <b>' + games.items.filter(i => !i.support).length + '</b> in sync set · support/BIOS files auto-included: <b>' +
     games.items.filter(i => i.support).length + '</b> · missing: <b class="' +
