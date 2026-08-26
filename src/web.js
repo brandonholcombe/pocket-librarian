@@ -198,6 +198,7 @@ async function reconcile() {
   fs.mkdirSync(ROMS_DIR, { recursive: true });
   let changed = false;
   for (const folder of await fsp.readdir(ROMS_DIR).catch(() => [])) {
+    if (folder.startsWith('.') || folder === 'lost+found') continue;
     const dir = path.join(ROMS_DIR, folder);
     if (!(await fsp.stat(dir)).isDirectory()) continue;
     const platform = PLATFORM_BY_FOLDER[folder] ?? 'Other';
@@ -231,6 +232,53 @@ async function reconcile() {
     if (r.sha1) continue;
     try { r.sha1 = await sha1File(path.join(ROMS_DIR, id)); saveIndex(); } catch { /* next boot */ }
   }
+}
+
+// ---------- save backups ----------
+const SAVES_DIR = path.join(ROMS_DIR, '.saves');
+const HISTORY_KEEP = 10;
+
+const saveSafePath = rel => {
+  const segs = String(rel || '').split('/').filter(Boolean);
+  if (!segs.length || segs.length > 12) return null;
+  if (segs.some(s => s === '.' || s === '..' || s.includes('\\'))) return null;
+  return segs.join('/');
+};
+
+async function walkSaves(dir, base = '') {
+  const out = [];
+  for (const name of await fsp.readdir(dir).catch(() => [])) {
+    const full = path.join(dir, name);
+    const st = await fsp.stat(full);
+    if (st.isDirectory()) {
+      if (name === '.history') continue;
+      out.push(...await walkSaves(full, base ? `${base}/${name}` : name));
+    } else if (st.isFile()) {
+      out.push({ path: base ? `${base}/${name}` : name, size: st.size, full });
+    }
+  }
+  return out;
+}
+
+async function savesManifest(userId) {
+  const dir = path.join(SAVES_DIR, userId);
+  const files = await walkSaves(dir);
+  return Promise.all(files.map(async f => ({
+    path: f.path, size: f.size, sha1: await sha1File(f.full),
+  })));
+}
+
+function rotateHistory(userDir, rel) {
+  const current = path.join(userDir, rel);
+  if (!fs.existsSync(current)) return;
+  const histDir = path.join(userDir, '.history', path.dirname(rel));
+  fs.mkdirSync(histDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  fs.renameSync(current, path.join(histDir, `${stamp}__${path.basename(rel)}`));
+  const suffix = `__${path.basename(rel)}`;
+  const versions = fs.readdirSync(histDir).filter(n => n.endsWith(suffix)).sort();
+  for (const old of versions.slice(0, Math.max(0, versions.length - HISTORY_KEEP)))
+    fs.rmSync(path.join(histDir, old), { force: true });
 }
 
 // ---------- sessions ----------
@@ -498,6 +546,43 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
           'content-type': 'application/octet-stream',
           'content-length': entry.size,
           'content-disposition': `attachment; filename="${entry.file}"`,
+        });
+        fs.createReadStream(full).pipe(res);
+        return;
+      }
+
+      // ----- save backups -----
+      if (p === '/api/saves/manifest') {
+        if (!authed()) return;
+        json(res, 200, { files: await savesManifest(user.id) });
+        return;
+      }
+      if (p === '/api/saves/file') {
+        if (!authed()) return;
+        const rel = saveSafePath(url.searchParams.get('path'));
+        if (!rel) { json(res, 400, { error: 'bad path' }); return; }
+        const userDir = path.join(SAVES_DIR, user.id);
+        const full = path.join(userDir, rel);
+        if (req.method === 'PUT') {
+          const tmp = full + '.uploading';
+          fs.mkdirSync(path.dirname(full), { recursive: true });
+          const hash = crypto.createHash('sha1');
+          let size = 0;
+          req.on('data', c => { hash.update(c); size += c.length; });
+          const out = fs.createWriteStream(tmp);
+          req.pipe(out);
+          out.on('finish', () => {
+            rotateHistory(userDir, rel);
+            fs.renameSync(tmp, full);
+            json(res, 200, { path: rel, size, sha1: hash.digest('hex') });
+          });
+          out.on('error', e => { fs.rmSync(tmp, { force: true }); json(res, 500, { error: e.message }); });
+          return;
+        }
+        if (!fs.existsSync(full)) { json(res, 404, { error: 'not found' }); return; }
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'content-length': fs.statSync(full).size,
         });
         fs.createReadStream(full).pipe(res);
         return;

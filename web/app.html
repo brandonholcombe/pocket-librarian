@@ -697,8 +697,13 @@ async function scanCard() {
     if (await cardFileSize(cardHandle, rel) !== item.size)
       todo.games.push({ ...item, rel });
   }
+  // saves: back up now (read-only), queue restores for the write pass
+  $('syncReport').textContent = 'Backing up saves…';
+  let saves = { onCard: 0, backedUp: 0, toRestore: [] };
+  try { saves = await backupSaves(); } catch (e) { console.error('save backup failed', e); }
+  todo.restores = saves.toRestore;
 
-  const n = todo.coreFiles.length + todo.games.length + (todo.fw ? 1 : 0);
+  const n = todo.coreFiles.length + todo.games.length + todo.restores.length + (todo.fw ? 1 : 0);
   $('syncReport').innerHTML =
     '<p>Firmware: ' + (prov.firmware
       ? (todo.fw ? '<b class="warn">v' + esc(prov.firmware.version) + ' needs install</b>'
@@ -712,6 +717,10 @@ async function scanCard() {
     '</p><p>Games: <b>' + games.items.filter(i => !i.support).length + '</b> in sync set · support/BIOS files auto-included: <b>' +
     games.items.filter(i => i.support).length + '</b> · missing: <b class="' +
     (todo.games.length ? 'warn' : 'ok') + '">' + todo.games.length + '</b></p>' +
+    '<p>Saves: <b>' + saves.onCard + '</b> on card · backed up now: <b class="' +
+    (saves.backedUp ? 'ok' : 'muted') + '">' + saves.backedUp + '</b>' +
+    (todo.restores.length ? ' · <b class="warn">' + todo.restores.length + '</b> to restore from backup' : '') +
+    '</p>' +
     (todo.failures.length ? '<p class="warn">Server couldn\'t prepare: ' + esc(todo.failures.join('; ')) + '</p>' : '') +
     (n === 0 ? '<p class="ok">Card is fully up to date ✓</p>' : '');
   $('goSync').textContent = 'Write everything to card (' + n + ' file' + (n === 1 ? '' : 's') + ')';
@@ -723,6 +732,41 @@ async function scanCard() {
 // hash files already on the card against the server's known-good SHA1s —
 // catches torn writes and silent corruption (classic fake-card symptom)
 let lastManifests = null;
+// ---- save backup ----
+async function walkCardDir(handle, base) {
+  const out = [];
+  for await (const [name, h] of handle.entries()) {
+    if (h.kind === 'directory') out.push(...await walkCardDir(h, base + '/' + name));
+    else out.push({ rel: base + '/' + name, handle: h });
+  }
+  return out;
+}
+async function backupSaves() {
+  const found = [];
+  for (const top of ['Saves', 'Memories']) {
+    try {
+      found.push(...await walkCardDir(await cardHandle.getDirectoryHandle(top), top));
+    } catch { /* dir absent */ }
+  }
+  if (!found.length) return { onCard: 0, backedUp: 0, toRestore: [] };
+  const server = new Map(
+    (await (await fetch('/api/saves/manifest')).json()).files.map(f => [f.path, f]));
+  let backedUp = 0;
+  const onCardSet = new Set();
+  for (const f of found) {
+    onCardSet.add(f.rel);
+    const file = await f.handle.getFile();
+    const buf = await file.arrayBuffer();
+    const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-1', buf))]
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+    if (server.get(f.rel)?.sha1 === sha) continue;
+    const r = await fetch('/api/saves/file?path=' + encodeURIComponent(f.rel), { method: 'PUT', body: buf });
+    if (r.ok) backedUp++;
+  }
+  const toRestore = [...server.values()].filter(f => !onCardSet.has(f.path));
+  return { onCard: found.length, backedUp, toRestore };
+}
+
 async function sha1OfCardFile(rel) {
   const segs = rel.split('/');
   const dir = await dirByPath(cardHandle, segs.slice(0, -1), false);
@@ -847,6 +891,7 @@ $('goSync').addEventListener('click', async () => {
     for (const name of todo.staleFw)
       await cardHandle.removeEntry(name).catch(() => {});
     for (const g of todo.games) await step('game', g.rel, '/api/rom/' + g.folder + '/' + encodeURIComponent(g.file), g.size);
+    for (const s of todo.restores) await step('save restore', s.path, '/api/saves/file?path=' + encodeURIComponent(s.path), s.size);
   } catch (e) {
     failures.push('sync aborted — ' + (e.name || 'Error') + ': ' + e.message);
   }
