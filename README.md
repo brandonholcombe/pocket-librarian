@@ -56,7 +56,10 @@ kubectl -n pocket-librarian create secret generic pocket-librarian-secrets \
 2. Copy the **Application ID** (General Information).
 3. **Bot** tab → **Reset Token** → copy the token. No privileged intents needed.
 4. Invite it: `https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot+applications.commands&permissions=76800`
-   (76800 = view channel, send messages, manage messages for pinning).
+   (76800 = view channel, send messages, manage messages).
+   Then ALSO enable **Pin Messages** on the bot's role (Server Settings →
+   Roles → the bot's managed role) — Discord split pinning out of Manage
+   Messages into its own permission, and the invite integer predates it.
 5. Right-click the server → Copy Server ID, and the channel → Copy Channel ID
    (enable Developer Mode in Discord settings if those aren't shown).
 6. For web login: **OAuth2** tab → copy the **Client Secret**, and add
