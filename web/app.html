@@ -336,10 +336,21 @@ async function openSaveModal(f) {
     (v.current ? line('current — ' + new Date(v.current.mtime).toLocaleString(), '', v.current.size) : '') +
     v.versions.map(x => line(fmtTs(x.ts), x.version, x.size)).join('') +
     (!v.current && !v.versions.length ? '<p class="muted">no versions stored</p>' : '') +
-    '<div class="actions" style="margin-top:1rem"><button class="ghost" id="mClose">Close</button></div>' +
+    '<div class="actions" style="margin-top:1rem"><button class="ghost" id="mClose">Close</button>' +
+    '<button class="ghost" id="mDelSave" style="color:var(--warn)">Delete backup…</button></div>' +
     '</div></div>';
   $('overlay').hidden = false;
   $('mClose').onclick = closeModal;
+  $('mDelSave').onclick = async () => {
+    const n = (v.current ? 1 : 0) + v.versions.length;
+    if (!confirm('Delete this backup and all ' + n + ' stored version(s)?\n\n' +
+      'The save on your SD card is NOT touched — but it will no longer be backed up history, ' +
+      'and it will be re-backed-up on your next scan unless backups are off.')) return;
+    const r = await fetch('/api/saves/file?path=' + encodeURIComponent(f.path), { method: 'DELETE' });
+    if (!r.ok) { alert('delete failed'); return; }
+    closeModal();
+    await loadSaves();
+  };
   $('overlay').querySelectorAll('[data-restore]').forEach(btn => btn.onclick = async () => {
     if (!cardHandle) { alert('Pick your SD card first (button above), then restore.'); return; }
     if (!confirm('Write this version of\n' + f.path + '\nonto the card, replacing what\'s there?')) return;
@@ -693,13 +704,27 @@ async function loadWishlist() {
       coverHtml(e.platform, e.title, badge) +
       '<div class="cinfo"><div class="t">' + esc(e.title) + '</div>' +
       '<div class="m"><span class="chip">' + esc(e.platform) + '</span>' +
-      esc(e.requestedBy || '') + '</div></div></div>';
+      esc(e.requestedBy || '') + '</div>' +
+      '<button class="ghost" data-unreq="' + esc(e.id) + '" ' +
+      'style="width:100%;margin-top:.4rem;font-size:.75rem;padding:.3rem;color:var(--warn)">remove</button>' +
+      '</div></div>';
     $(elId).innerHTML = items.length
       ? groupedGrid(items, e => e.platform, card, true)
       : '<div class="muted">none</div>';
   };
   render('wishGrid', 'requested', '<span class="badge want">wanted</span>');
 }
+$('wishGrid').addEventListener('click', async e => {
+  const btn = e.target.closest('[data-unreq]');
+  if (!btn) return;
+  const entry = btn.closest('.card').querySelector('.t').textContent;
+  if (!confirm('Remove "' + entry + '" from the wishlist?')) return;
+  const r = await (await fetch('/api/wishlist/remove', {
+    method: 'POST', body: JSON.stringify({ id: btn.dataset.unreq }),
+  })).json();
+  if (!r.ok) alert('not found — maybe already removed');
+  await loadWishlist();
+});
 
 // ---- catalog search -> request ----
 let reqTimer, reqResults = [];

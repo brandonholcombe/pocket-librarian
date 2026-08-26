@@ -326,7 +326,7 @@ const safeName = s => {
 };
 
 // ---------- server ----------
-export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
+export function startWeb({ state, GAMES = [], onLibraryChange, onRequest, onRemoveRequest }) {
   // After reconciling files on disk, re-announce every stored ROM so wishlist
   // flips missed at upload time (bulk copies, matcher fixes) heal on boot.
   reconcile()
@@ -434,6 +434,13 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
           if (starts.length >= 50) break;
         }
         json(res, 200, { results: starts.concat(contains).slice(0, 50) });
+        return;
+      }
+      if (p === '/api/wishlist/remove' && req.method === 'POST') {
+        if (!authed()) return;
+        if (!onRemoveRequest) { json(res, 500, { error: 'unavailable' }); return; }
+        const { id } = JSON.parse(await readBody(req));
+        json(res, 200, onRemoveRequest(String(id ?? '')));
         return;
       }
       if (p === '/api/request' && req.method === 'POST') {
@@ -647,6 +654,15 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
             json(res, 200, { path: rel, size, sha1: hash.digest('hex') });
           });
           out.on('error', e => { fs.rmSync(tmp, { force: true }); json(res, 500, { error: e.message }); });
+          return;
+        }
+        if (req.method === 'DELETE') {
+          fs.rmSync(path.join(userDir, rel), { force: true });
+          const histDir = path.join(userDir, '.history', path.dirname(rel));
+          const suffix = `__${path.basename(rel)}`;
+          for (const n of (fs.existsSync(histDir) ? fs.readdirSync(histDir) : []))
+            if (n.endsWith(suffix)) fs.rmSync(path.join(histDir, n), { force: true });
+          json(res, 200, { ok: true });
           return;
         }
         if (!fs.existsSync(full)) { json(res, 404, { error: 'not found' }); return; }

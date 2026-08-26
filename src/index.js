@@ -296,6 +296,14 @@ startWeb({
     if (r.status === 'added') updatePinnedMessage(client).catch(() => {});
     return r;
   },
+  onRemoveRequest(id) {
+    const i = state.entries.findIndex(e => e.id === id);
+    if (i < 0) return { ok: false };
+    const [entry] = state.entries.splice(i, 1);
+    saveState();
+    updatePinnedMessage(client).catch(() => {});
+    return { ok: true, entry };
+  },
   // A freshly uploaded ROM that matches a requested title flips it to owned.
   onLibraryChange(rom) {
     const entry = state.entries.find(e => e.status === 'requested' && normTitle(e.title) === normTitle(rom.title));
