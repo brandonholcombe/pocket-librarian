@@ -180,7 +180,15 @@ async function boot() {
   $('loginBtn').hidden = !!me;
   $('logoutBtn').hidden = !me;
   $('tabs').hidden = !me;
-  if (!me) { showTab('wishlist'); loadWishlist(); return; }
+  if (!me) {
+    for (const s of ['library', 'wishlist', 'cores', 'sync']) $('tab-' + s).hidden = true;
+    document.querySelector('.wrap').insertAdjacentHTML('beforeend',
+      '<div style="text-align:center;margin:4rem 0" id="landing">' +
+      '<div style="font-size:3rem">🎮</div>' +
+      '<p class="muted">A private family game library.<br>Log in with Discord to enter.</p></div>');
+    return;
+  }
+  document.getElementById('landing')?.remove();
   Object.keys(FOLDERS).forEach(p => {
     for (const sel of ['platformSel', 'platFilter']) {
       const o = document.createElement('option'); o.value = o.textContent = p;

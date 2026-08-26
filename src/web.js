@@ -337,11 +337,17 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
         res.end(); return;
       }
 
-      // ----- public checklist + boxart -----
+      // ----- session probe is the only public API -----
       if (p === '/api/me') { json(res, 200, { user: user ?? null }); return; }
-      if (p === '/api/state') { json(res, 200, { entries: state.entries }); return; }
+      if (p === '/api/state') {
+        if (!authed()) return;
+        json(res, 200, { entries: state.entries }); return;
+      }
       const artReq = p.match(/^\/api\/art\/([a-z]+)\/(.+)$/);
-      if (artReq) { await serveArt(res, artReq[1], decodeURIComponent(artReq[2])); return; }
+      if (artReq) {
+        if (!authed()) return;
+        await serveArt(res, artReq[1], decodeURIComponent(artReq[2])); return;
+      }
 
       // ----- catalog search + web requests -----
       if (p === '/api/catalog') {
