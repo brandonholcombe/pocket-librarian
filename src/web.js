@@ -61,6 +61,7 @@ const SUPPORT_FILES = [
 ];
 const supportPlatform = name => SUPPORT_FILES.find(([re]) => re.test(name))?.[1];
 const canonicalName = name => SUPPORT_FILES.find(([re]) => re.test(name))?.[2] ?? name;
+const isSupport = f => /bios|lynxboot|disksys|syscard/i.test(f);
 const PLATFORM_BY_FOLDER = Object.fromEntries(Object.entries(FOLDERS).map(([p, f]) => [f, p]));
 
 // libretro-thumbnails system names, for boxart
@@ -380,7 +381,11 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
       // ----- library -----
       if (p === '/api/roms' && req.method === 'GET') {
         if (!authed()) return;
-        json(res, 200, { roms: Object.entries(index.roms).map(([id, r]) => enrich(id, r)) });
+        json(res, 200, {
+          roms: Object.entries(index.roms)
+            .filter(([, r]) => !isSupport(r.file))
+            .map(([id, r]) => enrich(id, r)),
+        });
         return;
       }
       if (p === '/api/rom' && req.method === 'PUT') {
@@ -482,18 +487,18 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
         if (req.method === 'PUT') {
           const ids = JSON.parse(await readBody(req));
           if (!Array.isArray(ids)) { json(res, 400, { error: 'array expected' }); return; }
-          index.syncSets[user.id] = ids.filter(id => index.roms[id]);
+          index.syncSets[user.id] = ids.filter(id => index.roms[id] && !isSupport(index.roms[id].file));
           saveIndex();
         }
         json(res, 200, { ids: index.syncSets[user.id] ?? [] });
         return;
       }
       // ----- provisioning: cores + firmware -----
-      // folders implied by the user's sync set + always-synced support files
+      // folders implied by the games (not support files) in the user's sync set
       const autoFolders = () => {
-        const ids = (index.syncSets[user.id] ?? []).filter(id => index.roms[id]);
-        const bios = Object.keys(index.roms).filter(id => /bios|lynxboot|disksys|syscard/i.test(index.roms[id].file));
-        return [...new Set([...ids, ...bios].map(id => id.split('/')[0]))];
+        const ids = (index.syncSets[user.id] ?? [])
+          .filter(id => index.roms[id] && !isSupport(index.roms[id].file));
+        return [...new Set(ids.map(id => id.split('/')[0]))];
       };
       if (p === '/api/cores') {
         if (!authed()) return;
@@ -569,15 +574,19 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
 
       if (p === '/api/sync/manifest') {
         if (!authed()) return;
-        // BIOS/support files always sync, regardless of anyone's sync set
-        const chosen = (index.syncSets[user.id] ?? []).filter(id => index.roms[id]);
+        // support files auto-attach for whichever platforms the chosen games imply
+        const chosen = (index.syncSets[user.id] ?? [])
+          .filter(id => index.roms[id] && !isSupport(index.roms[id].file));
+        const folders = new Set(chosen.map(id => id.split('/')[0]));
         const bios = Object.keys(index.roms)
-          .filter(id => /bios|lynxboot|disksys|syscard/i.test(index.roms[id].file) && !chosen.includes(id));
-        const items = [...chosen, ...bios]
-          .map(id => {
-            const r = index.roms[id];
-            return { id, folder: FOLDERS[r.platform] ?? 'other', file: r.file, size: r.size, sha1: r.sha1 };
-          });
+          .filter(id => isSupport(index.roms[id].file) && folders.has(id.split('/')[0]));
+        const items = [...chosen, ...bios].map(id => {
+          const r = index.roms[id];
+          return {
+            id, folder: FOLDERS[r.platform] ?? 'other', file: r.file,
+            size: r.size, sha1: r.sha1, support: isSupport(r.file) || undefined,
+          };
+        });
         json(res, 200, { items });
         return;
       }

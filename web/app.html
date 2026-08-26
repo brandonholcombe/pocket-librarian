@@ -618,7 +618,8 @@ async function scanCard() {
     (todo.staleFw.length ? ' <span class="muted">(+' + todo.staleFw.length + ' old firmware file(s) to remove)</span>' : '') +
     '</p><p>Cores: <b>' + prov.cores.length + '</b> selected · files missing/outdated: <b class="' +
     (todo.coreFiles.length ? 'warn' : 'ok') + '">' + todo.coreFiles.length + '</b> of ' + coreFilesTotal +
-    '</p><p>Games: <b>' + games.items.length + '</b> in sync set · missing: <b class="' +
+    '</p><p>Games: <b>' + games.items.filter(i => !i.support).length + '</b> in sync set · support/BIOS files auto-included: <b>' +
+    games.items.filter(i => i.support).length + '</b> · missing: <b class="' +
     (todo.games.length ? 'warn' : 'ok') + '">' + todo.games.length + '</b></p>' +
     (todo.failures.length ? '<p class="warn">Server couldn\'t prepare: ' + esc(todo.failures.join('; ')) + '</p>' : '') +
     (n === 0 ? '<p class="ok">Card is fully up to date ✓</p>' : '');
