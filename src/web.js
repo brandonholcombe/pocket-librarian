@@ -554,6 +554,19 @@ export function startWeb({ state, GAMES = [], onLibraryChange, onRequest }) {
         return;
       }
 
+      // ----- per-user preferences -----
+      if (p === '/api/prefs') {
+        if (!authed()) return;
+        if (req.method === 'PUT') {
+          const b = JSON.parse(await readBody(req));
+          index.prefs = index.prefs ?? {};
+          index.prefs[user.id] = { ...(index.prefs[user.id] ?? {}), backupSaves: !!b.backupSaves };
+          saveIndex();
+        }
+        json(res, 200, { prefs: { backupSaves: index.prefs?.[user.id]?.backupSaves ?? true } });
+        return;
+      }
+
       // ----- save backups -----
       if (p === '/api/saves/manifest') {
         if (!authed()) return;

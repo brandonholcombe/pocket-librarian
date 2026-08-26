@@ -67,6 +67,19 @@
 
   /* --- discovery shelves --- */
   .rowh { font-size: .95rem; margin: 1.2rem 0 .5rem; color: var(--accent2); }
+  .switch { display: inline-flex; align-items: center; gap: .5rem; cursor: pointer;
+            font-size: .82rem; color: var(--dim); }
+  .switch input { appearance: none; width: 38px; height: 22px; border-radius: 999px;
+                  background: #3a3548; position: relative; transition: background .15s;
+                  cursor: pointer; margin: 0; flex-shrink: 0; }
+  .switch input:checked { background: var(--accent); }
+  .switch input::after { content: ''; position: absolute; top: 3px; left: 3px;
+                         width: 16px; height: 16px; border-radius: 50%; background: #fff;
+                         transition: left .15s; }
+  .switch input:checked::after { left: 19px; }
+  .vrow { display: flex; gap: .6rem; align-items: center; padding: .45rem .6rem;
+          border-radius: 8px; background: var(--panel2); margin-bottom: .35rem; }
+  .vrow .meta { flex: 1; white-space: normal; }
   .ic { width: 1em; height: 1em; vertical-align: -0.12em; display: inline-block; }
   .ph .ic { width: 2.2rem; height: 2.2rem; opacity: .55; }
   .shelfrow { display: flex; gap: 11px; overflow-x: auto; padding-bottom: .5rem;
@@ -165,11 +178,15 @@
   <button class="primary" id="goSync" hidden>Download missing to card</button>
   <button class="ghost" id="deepVerify" hidden>Deep verify card (hash check)</button>
   <div id="syncProg"></div>
-  <details id="savesMenu" style="margin-top:1.6rem">
-    <summary class="muted" style="cursor:pointer">Save backups — version history & sharing</summary>
-    <div id="savesList" style="margin-top:.6rem"></div>
-  </details>
-  <details id="coresAdv" style="margin-top:1rem">
+  <div style="margin-top:2rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+    <h2 class="rowh" id="savesHead" style="margin:0">Save backups</h2>
+    <label class="switch"><input type="checkbox" id="backupToggle" checked>
+      <span>back up my saves during scans</span></label>
+  </div>
+  <p class="muted" style="font-size:.8rem;margin:.3rem 0 .8rem">Click a save to browse its
+    version history, restore any version to the card, or share it with another player.</p>
+  <div class="grid small" id="savesGrid"><span class="muted">log in and scan a card to populate</span></div>
+  <details id="coresAdv" style="margin-top:1.6rem">
     <summary class="muted" style="cursor:pointer">Extra cores (advanced) — for arcade games or
       systems you don't have games for yet; everything else is automatic</summary>
     <div class="toolbar" style="margin-top:.6rem">
@@ -245,84 +262,103 @@ function showTab(name) {
     b.classList.toggle('on', b.dataset.tab === name);
   for (const s of ['library', 'wishlist', 'sync'])
     $('tab-' + s).hidden = s !== name;
+  if (name === 'sync' && me) loadSaves().catch(() => {});
 }
 $('coresAdv').addEventListener('toggle', () => {
   if ($('coresAdv').open && !cores.length) loadCores();
 });
 
-// ---- save backups menu ----
-let saveUsers = [];
-$('savesMenu').addEventListener('toggle', () => { if ($('savesMenu').open) loadSavesMenu(); });
-async function loadSavesMenu() {
-  $('savesList').innerHTML = '<span class="muted">loading…</span>';
-  const [man, us] = await Promise.all([
+// ---- save backups gallery ----
+let saveUsers = [], saveFiles = [], backupEnabled = true;
+
+function saveMeta(p) {  // 'Saves/gb/common/Pokemon Blue.sav' -> art + labels
+  const segs = p.split('/');
+  const folder = segs.length > 2 ? segs[1] : 'other';
+  const plat = Object.entries(FOLDERS).find(([, v]) => v === folder)?.[0] ?? 'Other';
+  const base = segs.at(-1).replace(/\.[^.]+$/, '');
+  const title = base.replace(/\s*\([^)]*\)/g, '').replace(/\s*\[[^\]]*\]/g, '').trim();
+  return { plat, title, base, isMemory: segs[0] === 'Memories' };
+}
+
+async function loadSaves() {
+  const [man, us, pr] = await Promise.all([
     fetch('/api/saves/manifest').then(r => r.json()),
     fetch('/api/saves/users').then(r => r.json()),
+    fetch('/api/prefs').then(r => r.json()),
   ]);
   saveUsers = (us.users || []).filter(u => u.id !== me.id);
-  if (!man.files.length) {
-    $('savesList').innerHTML = '<span class="muted">no saves backed up yet — pick your card and scan first</span>';
+  backupEnabled = pr.prefs.backupSaves;
+  $('backupToggle').checked = backupEnabled;
+  saveFiles = man.files;
+  if (!saveFiles.length) {
+    $('savesGrid').innerHTML = '<span class="muted">no saves backed up yet — pick your card and scan</span>';
     return;
   }
-  $('savesList').innerHTML = '<ul class="plain">' + man.files.map((f, i) =>
-    '<li style="flex-wrap:wrap"><span class="t">' + esc(f.path.replace(/^Saves\//, '')) + '</span>' +
-    '<span class="meta">' + fmtMB(f.size) + '</span>' +
-    '<button class="ghost" style="font-size:.75rem;padding:.25rem .6rem" data-vers="' + esc(f.path) + '">history</button>' +
-    '<button class="ghost" style="font-size:.75rem;padding:.25rem .6rem" data-shr="' + esc(f.path) + '">share</button>' +
-    '<div style="flex-basis:100%" id="vrow-' + i + '" data-for="' + esc(f.path) + '"></div></li>'
-  ).join('') + '</ul>';
+  $('savesGrid').innerHTML = saveFiles.map((f, i) => {
+    const m = saveMeta(f.path);
+    return '<div class="card" data-save="' + i + '">' +
+      coverHtml(m.plat, m.title) +
+      '<div class="cinfo"><div class="t">' + esc(m.base) + '</div>' +
+      '<div class="m"><span class="chip">' + esc(m.plat) + '</span>' +
+      (m.isMemory ? 'memory · ' : '') + fmtMB(f.size) + '</div></div></div>';
+  }).join('');
 }
+$('backupToggle').addEventListener('change', () => {
+  backupEnabled = $('backupToggle').checked;
+  fetch('/api/prefs', { method: 'PUT', body: JSON.stringify({ backupSaves: backupEnabled }) });
+});
+$('savesGrid').addEventListener('click', e => {
+  const card = e.target.closest('[data-save]');
+  if (card) openSaveModal(saveFiles[Number(card.dataset.save)]);
+});
+
 const fmtTs = ts => { try { return new Date(ts.replace(/-(\d\d)-(\d\d)-(\d+)Z$/, ':$1:$2.$3Z')).toLocaleString(); } catch { return ts; } };
 async function pickShareTarget() {
   if (!saveUsers.length) { alert('Nobody else has logged in yet — they appear here after their first login.'); return null; }
   if (saveUsers.length === 1)
-    return confirm('Share this save with ' + saveUsers[0].name + '? It lands in their backup; they restore it from their own Save backups menu.') ? saveUsers[0] : null;
+    return confirm('Share this save with ' + saveUsers[0].name + '? It lands in their backup; they restore it from their own Save backups section.') ? saveUsers[0] : null;
   const name = prompt('Share with whom? ' + saveUsers.map(u => u.name).join(', '));
   return saveUsers.find(u => u.name.toLowerCase() === (name || '').trim().toLowerCase()) ?? null;
 }
-$('savesList').addEventListener('click', async e => {
-  const versBtn = e.target.closest('[data-vers]');
-  const shrBtn = e.target.closest('[data-shr]');
-  const restBtn = e.target.closest('[data-restore]');
-  const shrVerBtn = e.target.closest('[data-shrver]');
-  if (versBtn) {
-    const p = versBtn.dataset.vers;
-    const row = document.querySelector('[data-for="' + CSS.escape(p) + '"]');
-    row.innerHTML = '<span class="muted">loading…</span>';
-    const v = await (await fetch('/api/saves/versions?path=' + encodeURIComponent(p))).json();
-    const line = (label, ver, size) =>
-      '<div style="display:flex;gap:.6rem;align-items:center;padding:.25rem 0">' +
-      '<span class="meta" style="flex:1">' + esc(label) + ' · ' + fmtMB(size) + '</span>' +
-      '<button class="ghost" style="font-size:.72rem;padding:.2rem .55rem" data-restore="' + esc(p) + '" data-ver="' + esc(ver) + '">restore to card</button>' +
-      '<button class="ghost" style="font-size:.72rem;padding:.2rem .55rem" data-shrver="' + esc(p) + '" data-ver="' + esc(ver) + '">share</button></div>';
-    row.innerHTML =
-      (v.current ? line('current (' + new Date(v.current.mtime).toLocaleString() + ')', '', v.current.size) : '') +
-      v.versions.map(x => line(fmtTs(x.ts), x.version, x.size)).join('') ||
-      '<span class="muted">no versions</span>';
-    return;
-  }
-  if (restBtn) {
+
+async function openSaveModal(f) {
+  const m = saveMeta(f.path);
+  const v = await (await fetch('/api/saves/versions?path=' + encodeURIComponent(f.path))).json();
+  const line = (label, ver, size) =>
+    '<div class="vrow"><span class="meta">' + esc(label) + ' · ' + fmtMB(size) + '</span>' +
+    '<button class="ghost" style="font-size:.72rem;padding:.25rem .6rem" data-restore data-ver="' + esc(ver) + '">restore to card</button>' +
+    '<button class="ghost" style="font-size:.72rem;padding:.25rem .6rem" data-share data-ver="' + esc(ver) + '">share</button></div>';
+  $('overlay').innerHTML = '<div class="modal">' +
+    '<div class="art">' + coverHtml(m.plat, m.title) + '</div>' +
+    '<div class="info"><h2>' + esc(m.base) + '</h2>' +
+    '<div class="m" style="margin-bottom:.8rem"><span class="chip">' + esc(m.plat) + '</span>' +
+    '<span class="meta">' + esc(f.path) + '</span></div>' +
+    (v.current ? line('current — ' + new Date(v.current.mtime).toLocaleString(), '', v.current.size) : '') +
+    v.versions.map(x => line(fmtTs(x.ts), x.version, x.size)).join('') +
+    (!v.current && !v.versions.length ? '<p class="muted">no versions stored</p>' : '') +
+    '<div class="actions" style="margin-top:1rem"><button class="ghost" id="mClose">Close</button></div>' +
+    '</div></div>';
+  $('overlay').hidden = false;
+  $('mClose').onclick = closeModal;
+  $('overlay').querySelectorAll('[data-restore]').forEach(btn => btn.onclick = async () => {
     if (!cardHandle) { alert('Pick your SD card first (button above), then restore.'); return; }
-    const p = restBtn.dataset.restore, ver = restBtn.dataset.ver;
-    if (!confirm('Write this version of\n' + p + '\nonto the card, replacing what\'s there?')) return;
-    const res = await fetch('/api/saves/file?path=' + encodeURIComponent(p) + (ver ? '&version=' + encodeURIComponent(ver) : ''));
+    if (!confirm('Write this version of\n' + f.path + '\nonto the card, replacing what\'s there?')) return;
+    const ver = btn.dataset.ver;
+    const res = await fetch('/api/saves/file?path=' + encodeURIComponent(f.path) + (ver ? '&version=' + encodeURIComponent(ver) : ''));
     if (!res.ok) { alert('fetch failed'); return; }
-    await writeCardFile(cardHandle, p, res, Number(res.headers.get('content-length')) || 1);
-    restBtn.textContent = 'restored ✓';
-    return;
-  }
-  if (shrBtn || shrVerBtn) {
-    const p = (shrBtn ?? shrVerBtn).dataset.shr ?? shrVerBtn.dataset.shrver;
-    const ver = shrVerBtn?.dataset.ver || '';
+    await writeCardFile(cardHandle, f.path, res, Number(res.headers.get('content-length')) || 1);
+    btn.textContent = 'restored ✓';
+  });
+  $('overlay').querySelectorAll('[data-share]').forEach(btn => btn.onclick = async () => {
     const target = await pickShareTarget();
     if (!target) return;
     const r = await fetch('/api/saves/share', {
       method: 'POST',
-      body: JSON.stringify({ path: p, to: target.id, version: ver || undefined }),
+      body: JSON.stringify({ path: f.path, to: target.id, version: btn.dataset.ver || undefined }),
     });
-    (shrBtn ?? shrVerBtn).textContent = r.ok ? 'shared ✓' : 'failed';
-  }
-});
+    btn.textContent = r.ok ? 'shared ✓' : 'failed';
+  });
+}
 
 // ---- cores ----
 let cores = [], coreSet = new Set(), autoCores = new Set();
@@ -776,10 +812,11 @@ async function scanCard() {
       todo.games.push({ ...item, rel });
   }
   // saves: back up now (read-only), queue restores for the write pass
-  $('syncReport').textContent = 'Backing up saves…';
+  $('syncReport').textContent = backupEnabled ? 'Backing up saves…' : 'Checking saves…';
   let saves = { onCard: 0, backedUp: 0, toRestore: [] };
-  try { saves = await backupSaves(); } catch (e) { console.error('save backup failed', e); }
+  try { saves = await backupSaves(backupEnabled); } catch (e) { console.error('save backup failed', e); }
   todo.restores = saves.toRestore;
+  loadSaves().catch(() => {});
 
   const n = todo.coreFiles.length + todo.games.length + todo.restores.length + (todo.fw ? 1 : 0);
   $('syncReport').innerHTML =
@@ -795,8 +832,10 @@ async function scanCard() {
     '</p><p>Games: <b>' + games.items.filter(i => !i.support).length + '</b> in sync set · support/BIOS files auto-included: <b>' +
     games.items.filter(i => i.support).length + '</b> · missing: <b class="' +
     (todo.games.length ? 'warn' : 'ok') + '">' + todo.games.length + '</b></p>' +
-    '<p>Saves: <b>' + saves.onCard + '</b> on card · backed up now: <b class="' +
-    (saves.backedUp ? 'ok' : 'muted') + '">' + saves.backedUp + '</b>' +
+    '<p>Saves: <b>' + saves.onCard + '</b> on card · ' +
+    (backupEnabled
+      ? 'backed up now: <b class="' + (saves.backedUp ? 'ok' : 'muted') + '">' + saves.backedUp + '</b>'
+      : '<span class="warn">backup is OFF</span>') +
     (todo.restores.length ? ' · <b class="warn">' + todo.restores.length + '</b> to restore from backup' : '') +
     '</p>' +
     (todo.failures.length ? '<p class="warn">Server couldn\'t prepare: ' + esc(todo.failures.join('; ')) + '</p>' : '') +
@@ -819,20 +858,20 @@ async function walkCardDir(handle, base) {
   }
   return out;
 }
-async function backupSaves() {
+async function backupSaves(upload) {
   const found = [];
   for (const top of ['Saves', 'Memories']) {
     try {
       found.push(...await walkCardDir(await cardHandle.getDirectoryHandle(top), top));
     } catch { /* dir absent */ }
   }
-  if (!found.length) return { onCard: 0, backedUp: 0, toRestore: [] };
   const server = new Map(
     (await (await fetch('/api/saves/manifest')).json()).files.map(f => [f.path, f]));
   let backedUp = 0;
   const onCardSet = new Set();
   for (const f of found) {
     onCardSet.add(f.rel);
+    if (!upload) continue;
     const file = await f.handle.getFile();
     const buf = await file.arrayBuffer();
     const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-1', buf))]
@@ -841,7 +880,8 @@ async function backupSaves() {
     const r = await fetch('/api/saves/file?path=' + encodeURIComponent(f.rel), { method: 'PUT', body: buf });
     if (r.ok) backedUp++;
   }
-  const toRestore = [...server.values()].filter(f => !onCardSet.has(f.path));
+  const toRestore = found.length || server.size
+    ? [...server.values()].filter(f => !onCardSet.has(f.path)) : [];
   return { onCard: found.length, backedUp, toRestore };
 }
 
