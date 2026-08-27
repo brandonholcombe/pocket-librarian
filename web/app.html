@@ -129,6 +129,7 @@
   <button data-tab="library" class="on">Library</button>
   <button data-tab="wishlist">Wishlist</button>
   <button data-tab="sync">Sync to SD</button>
+  <button data-tab="help">Help</button>
 </nav>
 
 <section id="tab-library" hidden>
@@ -197,6 +198,90 @@
   </details>
 </section>
 
+<section id="tab-help" hidden style="max-width:720px">
+  <h2 class="rowh">What this is</h2>
+  <p>A private game library for our Analogue Pockets. Request games here or in Discord,
+  upload ROMs, pick what goes on your SD card, and the site installs everything —
+  firmware, cores, BIOS files, games, and your saves — in one pass. Access is limited to
+  members of the family Discord server; log in with Discord.</p>
+
+  <h2 class="rowh">Requesting games</h2>
+  <p>Use the search bar on the <b>Wishlist</b> tab (16k-title catalog, covers included) and click
+  <b>Request</b> — or in Discord: <code>/request</code> (with autocomplete), <code>/got</code> to mark
+  purchased, <code>/remove</code>, <code>/list</code> for the checklist, <code>/help</code>. Both routes feed the
+  same list. Uploading a ROM that matches a requested title checks it off automatically.
+  Anyone can remove a wishlist entry (remove button on the card).</p>
+
+  <h2 class="rowh">Uploading ROMs</h2>
+  <p>Drag files or zips onto the drop zone in <b>Library</b>. Platform is detected from the file
+  extension; zips are extracted automatically and each game inside is shelved correctly —
+  <b>except arcade romsets</b>: choose <b>Arcade</b> in the dropdown to keep those zips intact.
+  Non-ROM junk inside zips is skipped. Stay on the page until the "uploaded" confirmation —
+  the browser warns you if you try to leave mid-upload.</p>
+  <p>BIOS/boot files are recognized by name, renamed to what the cores require, hidden from
+  the library grid, and synced automatically whenever games of their platform are in your
+  sync set. You never manage them after uploading once.</p>
+  <table style="font-size:.85rem;border-spacing:0 .2rem">
+    <tr><td style="padding-right:1rem"><code>gba_bios.bin</code></td><td>16,384 bytes — <b>required</b> for all GBA games</td></tr>
+    <tr><td><code>gb_bios / dmg_boot / dmg0_rom .bin</code></td><td>256 bytes — stored as <code>dmg_bios.bin</code>, <b>required</b> for GB games</td></tr>
+    <tr><td><code>gbc_bios / cgb_boot .bin</code></td><td>2,304 bytes — <b>required</b> for GBC games</td></tr>
+    <tr><td><code>lynxboot.img</code></td><td>512 bytes — required for Lynx</td></tr>
+    <tr><td><code>disksys.rom</code></td><td>8KB — Famicom Disk System games only</td></tr>
+    <tr><td><code>syscard3.pce</code></td><td>256KB — PC Engine CD games</td></tr>
+    <tr><td><code>bios_CD_*.bin</code></td><td>Sega CD, per region</td></tr>
+  </table>
+
+  <h2 class="rowh">Building your card (sync sets)</h2>
+  <p>Your <b>sync set</b> is the list of games that belong on your card — it's personal; everyone
+  has their own. Add games with the <b>+</b> button that appears when hovering a cover, from the
+  detail view, or in bulk: every group header (platform / series / genre) has a
+  <b>sync all</b> toggle, and the toolbar button applies to everything matching your current
+  search/filters. Cores and BIOS files follow your game choices automatically — the only
+  manual core picking is for arcade games ("Extra cores" on the Sync tab).</p>
+
+  <h2 class="rowh">Sync to SD</h2>
+  <p>Works in <b>Chrome or Edge</b> (Mac and Windows) — Safari/Firefox can't write to the card.
+  Pick the card's root folder. A scan reports firmware, cores, games, and saves; the write
+  button installs everything missing with per-file progress and retries. While scanning, your
+  saves (<code>Saves/</code> and <code>Memories/</code>) are backed up automatically — unless your
+  backup toggle is off — and saves missing from the card (e.g. a fresh card) are restored
+  during the write. New card? Format it exFAT with a Master Boot Record partition first
+  (Disk Utility), then sync — everything installs in one pass.</p>
+
+  <h2 class="rowh">Save backups</h2>
+  <p>Each save keeps its <b>last 10 versions</b>. Click a save in the gallery to browse versions,
+  <b>restore</b> any of them to the connected card, <b>share</b> one with another player (it lands in
+  their backup — they choose when to restore it), or <b>delete</b> the backup. Conflict rule: a
+  save that changed on your card always wins and becomes the new backup — restores only ever
+  fill gaps, never overwrite newer play. In-game saves are covered; the Pocket cannot do
+  save states (Memories) for SD-loaded games — that's an Analogue limitation, cartridges only.</p>
+
+  <h2 class="rowh">Deep verify & repair</h2>
+  <p>The normal scan compares sizes only. <b>Deep verify</b> hashes everything on the card —
+  firmware, all core files, and games — against known-good copies, explains any mismatch
+  (save-data writes vs. real corruption), and offers one-click <b>repair</b> with re-verification.
+  Run it whenever the Pocket misbehaves or after a card was pulled without shutting down.</p>
+
+  <h2 class="rowh">Pocket-side tips & known errors</h2>
+  <ul style="line-height:1.7">
+    <li><b>Always power the Pocket fully off</b> (hold power) before removing the card — sleep
+      is not safe, and yanking the card corrupts files. On the computer, eject before pulling.</li>
+    <li><b>Game "opens a folder" instead of launching</b> → its platform's required BIOS is
+      missing from the card. Upload it (table above), re-sync.</li>
+    <li><b>"Error in Framework RS: Bridge not responding"</b> → corrupted core files.
+      Deep verify → repair.</li>
+    <li><b>Game errors at boot</b> → corrupted game file. Deep verify → repair.</li>
+    <li><b>Cards:</b> standard UHS-I microSD only (SanDisk/Samsung 256GB from a first-party
+      seller). <b>No microSD Express cards</b> — the Pocket can't read them reliably.</li>
+    <li>Launch games via <b>openFPGA → platform</b>; the <b>Recent</b> list (firmware 2.6+) is the
+      fast path to your rotation.</li>
+  </ul>
+
+  <h2 class="rowh">Admin</h2>
+  <p>The Discord server owner can delete games from the library (detail view → Remove).
+  Deleting never touches SD cards — remove card files manually if needed.</p>
+</section>
+
 <div class="overlay" id="overlay" hidden></div>
 
 <footer class="muted" style="margin-top:2rem;font-size:.75rem">
@@ -239,7 +324,7 @@ async function boot() {
   $('logoutBtn').hidden = !me;
   $('tabs').hidden = !me;
   if (!me) {
-    for (const s of ['library', 'wishlist', 'sync']) $('tab-' + s).hidden = true;
+    for (const s of ['library', 'wishlist', 'sync', 'help']) $('tab-' + s).hidden = true;
     document.querySelector('.wrap').insertAdjacentHTML('beforeend',
       '<div style="text-align:center;margin:4rem 0" id="landing">' +
       '<div style="font-size:3.4rem;color:var(--accent2)">' + icon('logo') + '</div>' +
@@ -260,7 +345,7 @@ async function boot() {
 function showTab(name) {
   for (const b of document.querySelectorAll('#tabs button'))
     b.classList.toggle('on', b.dataset.tab === name);
-  for (const s of ['library', 'wishlist', 'sync'])
+  for (const s of ['library', 'wishlist', 'sync', 'help'])
     $('tab-' + s).hidden = s !== name;
   if (name === 'sync' && me) loadSaves().catch(() => {});
 }

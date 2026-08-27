@@ -1,80 +1,86 @@
 # pocket-librarian
 
-Discord bot + web checklist for the family Analogue Pocket game library.
-Runs on tow-c1 at <https://pocket.kodloki.io>.
+Private family game library for Analogue Pockets: Discord bot + web app.
+Runs on tow-c1 at <https://pocket.kodloki.io> (guild-member login only).
 
 ## What it does
 
-- **`/request <game>`** — request a game, with autocomplete over ~16k titles
-  (No-Intro/Redump catalogs for GB, GBC, GBA, NES, SNES, Genesis, Sega CD,
-  PC Engine (+CD), Game Gear, Lynx, NGPC). Free-typed titles work too
-  (platform shows as "Other").
-- **`/got <game>`** — mark a requested game as purchased (autocompletes over
-  the requested list).
-- **`/remove <game>`** — drop an entry entirely.
-- **`/list`** — print the checklist on demand.
-- Maintains a **pinned checklist message** in the channel (auto-updates on
-  every change).
-- **pocket.kodloki.io**: Discord-OAuth-gated web app (allowlisted user IDs
-  only) with three tabs — **Library** (search the stored ROMs, drag-and-drop
-  upload, per-person sync-set checkboxes), **Wishlist** (the checklist), and
-  **Sync to SD** (browser writes missing games straight onto the SD card via
-  the File System Access API — Chrome/Edge on Mac & Windows).
-- Uploading a ROM whose title matches a requested game auto-flips it to
-  "in library" on the checklist.
+**Web app** (`web/app.html`, served by `src/web.js`):
+- **Library** — boxart grid (libretro-thumbnails, proxied + cached) with
+  year/genre/developer metadata, hover quick-add to sync set, discovery
+  shelves (popular / recently added / unsynced), grouping by
+  platform/series/genre, detail modal with download and admin delete.
+- **Wishlist** — catalog search (16k No-Intro/Redump titles) with one-click
+  request; requested grid with remove; auto-checks-off when a matching ROM
+  is uploaded.
+- **Sync to SD** — browser writes the card via the File System Access API
+  (Chrome/Edge): latest Analogue firmware (mirrored from analogue.co),
+  cores (auto-selected from the games in your sync set; manual picker for
+  arcade), BIOS/support files (auto-attached per platform), games, and
+  save restores — one pass, per-file progress and retries. **Deep verify**
+  hashes everything on the card against known-good copies and repairs
+  mismatches. **Save backups**: Saves/ + Memories/ auto-backed-up on scan
+  (per-user toggle), 10-version history, restore any version, share to
+  another member, delete.
+- **Help** — full user docs, BIOS table, Pocket troubleshooting.
 
-Checklist state lives in `/data/library.json`; the ROM files live on an 80Gi
-PVC at `/roms/<platform-folder>/`, indexed in `/data/roms-index.json` (SHA1,
-size, uploader). Bulk initial upload: `scripts/upload-roms.sh`.
+**Discord bot** (`src/index.js`): `/request` (autocomplete), `/got`,
+`/remove`, `/list`, `/help`; static pinned link card to the site.
+
+**Uploads**: drag-drop files or zips (auto-extracted, shelved by inner
+extension; `platform=Arcade` keeps romset zips intact). BIOS files are
+recognized by name, canonicalized to what core `data.json`s require
+(e.g. `gb_bios.bin` → `dmg_bios.bin`), hidden from the library, and
+always synced for their platform. Extensions are lowercased (the Pocket's
+browser is case-sensitive).
+
+## Storage
+
+- `/data` (PVC): checklist state (`library.json`), ROM index + sync sets +
+  core sets + users + prefs (`roms-index.json`), core/firmware/boxart
+  caches under `provision/` and `art-cache/`.
+- `/roms` (80Gi PVC): ROM files by platform folder; save backups under
+  `.saves/<discord-user-id>/` with `.history/` versions.
 
 ## Config (K8s secret `pocket-librarian-secrets`)
 
-| var | required | what |
-|---|---|---|
-| `DISCORD_TOKEN` | yes | bot token |
-| `DISCORD_APP_ID` | yes | application ID |
-| `DISCORD_GUILD_ID` | recommended | server ID — makes slash commands register instantly |
-| `DISCORD_CHANNEL_ID` | recommended | channel for the pinned checklist message |
-| `DISCORD_CLIENT_SECRET` | yes (web login) | OAuth2 client secret from the same Discord app |
-| `ALLOWED_USER_IDS` | yes (web login) | comma-separated Discord user IDs allowed to log in |
-| `SESSION_SECRET` | recommended | any random string; sessions survive restarts |
+| var | what |
+|---|---|
+| `DISCORD_TOKEN` | bot token (also used to verify guild membership + owner) |
+| `DISCORD_APP_ID` | application/client id |
+| `DISCORD_CLIENT_SECRET` | OAuth2 secret for web login |
+| `DISCORD_GUILD_ID` | the family server — members may log in; owner is admin |
+| `DISCORD_CHANNEL_ID` | channel for the pinned link card |
+| `SESSION_SECRET` | cookie signing; rotate to force-logout everyone |
+| `ALLOWED_USER_IDS` | optional login allowlist override |
+| `ADMIN_USER_IDS` | optional admin override (default: guild owner) |
 
-```bash
-kubectl -n pocket-librarian create secret generic pocket-librarian-secrets \
-  --from-literal=DISCORD_TOKEN=... \
-  --from-literal=DISCORD_APP_ID=... \
-  --from-literal=DISCORD_GUILD_ID=... \
-  --from-literal=DISCORD_CHANNEL_ID=... \
-  --from-literal=DISCORD_CLIENT_SECRET=... \
-  --from-literal=ALLOWED_USER_IDS=<yourID>,<brotherID> \
-  --from-literal=SESSION_SECRET=$(openssl rand -hex 32)
-```
-
-## Discord app setup (one-time)
-
-1. <https://discord.com/developers/applications> → **New Application** → name it.
-2. Copy the **Application ID** (General Information).
-3. **Bot** tab → **Reset Token** → copy the token. No privileged intents needed.
-4. Invite it: `https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot+applications.commands&permissions=76800`
-   (76800 = view channel, send messages, manage messages).
-   Then ALSO enable **Pin Messages** on the bot's role (Server Settings →
-   Roles → the bot's managed role) — Discord split pinning out of Manage
-   Messages into its own permission, and the invite integer predates it.
-5. Right-click the server → Copy Server ID, and the channel → Copy Channel ID
-   (enable Developer Mode in Discord settings if those aren't shown).
-6. For web login: **OAuth2** tab → copy the **Client Secret**, and add
-   `https://pocket.kodloki.io/auth/callback` under **Redirects**.
-7. Right-click each person's avatar → Copy User ID → these become
-   `ALLOWED_USER_IDS`.
+OAuth redirect `https://pocket.kodloki.io/auth/callback` must be registered
+in the Discord app. Bot invite permissions `76800`, **plus enable the
+"Pin Messages" permission on the bot's role** (newer granular permission,
+not covered by the invite integer).
 
 ## Deploy
 
 ```bash
-scripts/deploy.sh          # buildx amd64 → Docker Hub → kubectl apply + rollout
+scripts/deploy.sh     # buildx amd64 → Docker Hub → kubectl apply + rollout
 ```
 
-## Rebuild the game catalog
+Manifests in `K8s/app.yaml` (namespace `pocket-librarian`, ingress with
+2g body size for uploads, 512Mi memory limit — firmware/core processing
+needs the headroom).
 
-```bash
-npm run build-db           # refetches libretro-database DATs → data/games.json
-```
+## Data pipelines
+
+- `npm run build-db` — rebuilds `data/games.json` from libretro-database
+  DATs (titles + year/genre/developer, 12 platforms).
+- Core inventory: openfpga-cores-inventory API, cached 6h; core zips
+  downloaded/extracted on demand with per-file sha1 manifests.
+- Firmware: version discovered via analogue.co redirect chain, streamed to
+  disk (do not buffer — OOM), cached until version changes.
+- Boxart: libretro-thumbnails, matched by normalized title (Roman-numeral
+  aware, region-preferring, fuzzy fallback), cached on disk.
+
+## Bulk ROM upload
+
+`SESSION=<browser session cookie> scripts/upload-roms.sh <assets-dir>`
